@@ -1,0 +1,430 @@
+# Copyright (c) 2024 by Adam Korab <adam.korab@sixpackets.com>
+## All rights reserved.
+##
+## This code is maintained by
+### Adam Korab 
+### and is contributed to by 
+### Adam Korab, Dan Gast, Tim Burke, and Swen Wulf
+##
+## Redistribution and use in source and binary forms, with or without
+## modification, are permitted provided that the following conditions
+## are met:
+## 1. Redistributions of source code must retain the above copyright
+##    notice, this list of conditions and the following disclaimer.
+## 2. Redistributions in binary form must reproduce the above copyright
+##    notice, this list of conditions and the following disclaimer in the
+##    documentation and/or other materials provided with the distribution.
+##
+## THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+## ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+## IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+## ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+## FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+## DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+## OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+## HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+## LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+## OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+## SUCH DAMAGE.
+
+#!/usr/bin/env bash
+
+# Usage function to display help message
+usage() {
+    echo " "
+    echo "Create a new as-set object"
+    echo "--------------------------"
+    echo "Usage: $0 -s|--source <irr_source>] -a|--as-set <as_set_name> -d|--description <as_set_description>"
+    echo "-m|--members <members_file>  --admin <admin-c: attribute> --tech <tech-c: attribute>" 
+    echo "--mnt <mnt-by: attribute>  --notify <notify: attribute  -3|--lumen-remarks"
+    echo "-c|--changed <changed_email> -p|--mntnr-passwd <maintainer auth password>"
+    echo "-f|--format <line|comma> -x|--config <config file>"
+    echo "--debug"
+    echo " "
+    echo "Most of these may be defined in your config file ($HOME/.irr_config if not otherwise specified)"
+    echo "to avoid repeatedly specifying them.  Please refer to dot.irr_config.example"
+    echo " "
+    echo "-s|--source <irr_source>      NTTCOM|RADB|others"
+    echo " "
+    echo "-a|--as-set <as_set_name>     AS-FOO|AS65012:AS-FOO"
+    echo " "
+    echo "-m|--members <members_file>   A text file containing members you wish to add to <as_set_name>"
+    echo "                              Commas will be converted to newlines. One member per line"
+    echo "                              aut-num objects must match ^AS"
+    echo "                              as-set objects must match ^AS-"
+    echo "				Please refer to AS-SET_NAME-members.example"
+    echo " " 
+    echo "--admin <admin-c: attribute>	Set the admin-c: field to string (read from ~/.irr_config if not set)"
+    echo "--tech <tech-c: attribute>    Set the tech-c: field to string (read from ~/.irr_config if not set)"
+    echo "--mnt <mnt-by: attribute	Set the mnt-by: field to string (read from ~/.irr_config if not set)"
+    echo "--notify <notify: attribute	Set the notify: field to string (read from ~/.irr_config if not set)"
+    echo " "
+    echo "[-3|--lumen-remarks]          Add remarks: Level3 members: to <as_set_name> for all members"
+    echo " "    
+    echo "[-c <changed_value>]          Email address to use for changed: attribute"
+    echo "                              May also be kept in ~/.irr_changed"
+    echo "                              User will be prompted to enter email address if not passed with -c"
+    echo "                              and ~/.irr_changed does not exist or is not accessible"
+    echo " "
+    echo "[-p|--mntner-passwd]		Specify a password value to use for maintainer auth."
+    echo " "
+    echo "[-f|--format<line|comma>]	Output style, one member per line or 4 members per line, comma separated."
+    echo "                              Default is line."
+    echo "[x|--config <file>]		Use <config file> to initalize this script. Default: $HOME/.irr_config"
+    echo "[-d|--debug]                  Enable debugging"
+    echo " "
+#    echo "Import an existing as-set"
+#    echo "--------------------------"
+#    echo " "
+#    echo "Queries specified IRR for existing AS-SET object specified by -a <as_set_name>" 
+#    echo "and writes to members file in working directory."
+#    echo " "
+#    echo "You should only need to do this once. Subsequent as-set updates can then be" 
+#    echo "made by editing the resulting file using the flags above."
+#    echo " "
+#    echo "Usage: $0 (-s|--source <irr_source> -a|--as-set <as_set_name> --import)"
+#    echo " "
+    exit 1
+}
+
+# Initialize variables
+## Mac default /usr/bin/whois is stupid
+UNAME=`uname`
+if [ "$UNAME" = "Darwin" ]; then
+	WHOIS="/opt/homebrew/opt/whois/bin/whois"
+	if [ ! -f "$WHOIS" ]; then
+    		echo "ERROR: please install whois by running 'brew install whois' and then retry." && exit 1
+	fi
+else
+	WHOIS=`command -v whois`
+fi
+
+SOURCE=""
+AS_SET=""
+DESCR=""
+MEMBERS=""
+ADMIN_C=""
+TECH_C=""
+MNT=""
+NOTIFY=""
+LUMEN=0      			# Default to LUMEN=0
+CHANGED=""
+AUTHPW="DummyValue-script"    	# Default to dummy auth passwd
+DEBUG=0      			# Default to DEBUG=0
+IMPORT=0     			# Default to IMPORT=0
+FORMAT="line"
+IRR_CONFIG="$HOME/.irr_config"
+
+# Function to validate email format 
+validate_email() {
+    local email="$1"
+    if [[ "$email" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,4}$ ]]; then
+	if [ "$DEBUG" = "1" ]; then
+		echo "DEBUG: Email is valid"
+	fi
+        return 0  # Valid email
+    else
+	if [ "$DEBUG" = "1" ]; then
+		echo "DEBUG: "
+	fi
+        return 1  # Invalid email
+    fi
+}
+
+# Function to validate contact
+validate_contact() {
+    local contact="$1"
+    if [[ "$contact" =~ ^[A-Z0-9]+-(ARIN|RIPE) ]]; then
+	if [ "$DEBUG" = "1" ]; then
+		echo "DEBUG: Contact is valid"
+	fi
+        return 0 # Valid contact handle
+    else
+	if [ "$DEBUG" = "1" ]; then
+		echo "DEBUG: Contact is invalid"
+	fi
+        return 1 # Invalid contact handle
+    fi
+}
+
+# Function to validate maintainer
+validate_mntner() {
+	local maint="$1"
+	if [[ "$maint" =~ ^(MNT-|MAINT-).* ]]; then
+		if [ "$DEBUG" = "1" ]; then
+			echo "DEBUG: Valid maintainer"
+		fi
+		return 0 # Valid
+	else
+		if [ "$DEBUG" = "1" ]; then
+			echo "DEBUG: Invalid maintainer"
+		fi
+		return 1 # Invalid
+	fi
+}
+
+# Function to validate AS_SET format
+validate_as_set() {
+    local as_set="$1"
+    if [[ "$as_set" =~ ^(AS(([0-9]+):AS-.*)|^AS-.*)$ ]]; then
+	if [ "$DEBUG" = "1" ]; then
+		echo "DEBUG: Valid AS_SET"
+	fi
+        return 0  # Valid AS_SET
+    else
+	if [ "$DEBUG" = "1" ]; then
+		echo "DEBUG: Invalid AS_SET"
+	fi
+        return 1  # Invalid AS_SET
+    fi
+}
+
+# If no arguments are provided, print usage and exit
+if [ $# -eq 0 ]; then
+    usage
+fi
+
+## Handle the special case for --import
+#if [[ " $* " == *"--import"* ]]; then
+#    IMPORT=1
+#    # Make sure only -s, -a, and --import are passed
+#    while [[ "$#" -gt 0 ]]; do
+#        case $1 in
+#            -s|--source) SOURCE="$2"; shift 2;;
+#            -a|--as-set) AS_SET="$2"; shift 2;;
+#            --import) shift 2;;  
+#            -h|--help) usage;;
+#            *) echo "Error: When --import is specified, only -s, -a, and --import options are allowed."; exit 1;;
+#        esac
+#    done
+#
+#    # Ensure source is provided with and --import
+#    if [[ -z "$SOURCE" ]]; then
+#        echo "Error: -s (source) must be provided."
+#        usage
+#    fi
+#
+#fi
+
+# Parse the standard command line options
+# Options passed for variables will override settings included from $IRR_CONFIG
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -s|--source) SOURCE="$2"; shift 2;;
+        -a|--as-set) AS_SET="$2"; shift 2;;
+        -d|--description) DESCR="$2"; shift 2;;
+        -m|--members) MEMBERS="$2"; shift 2;;
+        --admin) ADMIN_C="$2"; shift 2;;
+        --tech) TECH="$2"; shift 2;;
+        --mnt) MNT="$2"; shift 2;;
+        --notify) NOTIFY="$2"; shift 2;;
+        -3|--lumen-remarks) LUMEN=1; shift 1;;
+        -c|--changed) CHANGED="$2"; shift 2;;
+        -p|--mntner-passwd) AUTHPW="$2"; shift 2;;
+        -f|--format) FORMAT="$2"; shift 2;;
+        -x|--config) IRR_CONFIG="$2"; shift 2;;
+         --debug) DEBUG=1; shift 1;;
+        -h|--help) usage;;
+        *) echo "Unknown option: $1"; usage;;
+    esac
+done
+
+# Load config variables from file
+if [ "$DEBUG" = "1" ]; then
+        echo "DEBUG: source config vars from $IRR_CONFIG"
+fi
+
+if [ ! -f "$IRR_CONFIG" ]; then
+        echo "DEBUG: $IRR_CONFIG not found."
+else
+        if [ "$DEBUG" = "1" ]; then
+                echo "DEBUG: Found $IRR_CONFIG"
+        fi
+        source $IRR_CONFIG
+fi
+
+# Ensure required options are set
+if [[ -z "$AS_SET" || -z "$DESCR" || -z "$MEMBERS" ]]; then
+	echo "Error: options -a (AS-SET), -d (DESCRIPTION), and -m (MEMBERS) are required."
+    usage
+fi
+
+if [ "$DEBUG" = "1" ]; then
+        echo "DEBUG: SOURCE: $SOURCE"
+        echo "DEBUG: AS-SET: $AS_SET"
+        echo "DEBUG: MEMBERS: $MEMBERS"
+        echo "DEBUG: ADMIN_C: $ADMIN_C"
+        echo "DEBUG: TECH_C: $TECH_C"
+        echo "DEBUG: MNT: $MNT"
+        echo "DEBUG: NOTIFY: $NOTIFY"
+        echo "DEBUG: LUMEN: $LUMEN"
+        echo "DEBUG: CHANGED: $CHANGED"
+        echo "DEBUG: AUTHPW: $AUTHPW"
+        echo "DEBUG: FORMAT: $FORMAT"
+	echo "DEBUG: IRR_CONFIG: $IRR_CONFIG"
+        echo "DEBUG: DEBUG: $DEBUG"
+        echo "DEBUG: IMPORT: $IMPORT"
+fi
+
+# Validate AS_SET
+if [ "$DEBUG" = "1" ]; then
+	echo "DEBUG: Validating AS-SET"
+fi
+if ! validate_as_set "$AS_SET"; then
+    echo "Error: Invalid AS-SET format: $AS_SET"
+    usage
+fi
+
+# If --admin was not provided, and not found in IRR_CONFIG, prompt.
+if [ "$DEBUG" = "1" ]; then
+	echo "DEBUG: validating admin-c"
+fi
+if [ -z "$ADMIN_C" ]; then
+    echo "ADMIN_C is empty. Please provide a value."
+    read -p "Please input a valid handle for the admin-c attribute: " ADMIN_C
+fi
+
+if ! validate_contact "$ADMIN_C"; then
+    echo "Invalid format for admin-c attribute."
+    # Keep prompting until the input is valid
+    until validate_contact "$ADMIN_C"; do
+        echo "Invalid format. Please try again."
+        read -p "Please input a valid handle for the admin-c attribute: " ADMIN_C
+    done
+fi
+
+# If --tech was not provided, and not found in IRR_CONFIG, prompt.
+if [ "$DEBUG" = "1" ]; then
+	echo "DEBUG: validating tech-c"
+fi
+if [ -z "$TECH_C" ]; then
+    echo "TECH_C is empty. Please provide a value."
+    read -p "Please input a valid handle for the tech-c attribute: " TECH_C
+fi
+
+if ! validate_contact "$TECH_C"; then
+    echo "Invalid format for tech-c attribute."
+    # Keep prompting until the input is valid
+    until validate_contact "$TECH_C"; do
+        echo "Invalid format. Please try again."
+        read -p "Please input a valid handle for the tech-c attribute: " TECH_C
+    done
+fi
+
+# If --mnt was not provided, and not found in IRR_CONFIG, prompt.
+if [ "$DEBUG" = "1" ]; then
+	echo "DEBUG: validating mnt-by"
+fi
+
+if [ -z "$MNT" ]; then
+    echo "MNT is empty. Please provide a value."
+    read -p "Please input a valid handle for the mnt-by attribute: " MNT
+fi
+
+if ! validate_mntner "$MNT"; then
+    echo "Invalid format for mnt-by attribute."
+    # Keep prompting until the input is valid
+    until validate_mntner "$MNT"; do
+        echo "Invalid format. Please try again."
+        read -p "Please input a valid object for the mnt-by attribute: " MNT
+    done
+fi
+
+# If --notify was provided, validate the email address
+if [ "$DEBUG" = "1" ]; then
+        echo "DEBUG: validating notify"
+fi
+
+if ! validate_email "$NOTIFY"; then
+    echo "Invalid email address format for notify attribute."
+    # Keep prompting until the input is valid
+    until validate_email "$NOTIFY"; do
+        echo "Invalid email format. Please try again."
+        read -p "Please input a valid email address for the notify attribute: " NOTIFY
+    done
+fi
+
+# If --changed was provided, validate the email address
+if [ "$DEBUG" = "1" ]; then
+        echo "DEBUG: validating changed"
+fi
+
+if ! validate_email "$CHANGED"; then
+    echo "Invalid email address format for changed attribute."
+    # Keep prompting until the input is valid
+    until validate_email "$CHANGED"; do
+        echo "Invalid email format. Please try again."
+        read -p "Please input a valid email address for the changed attribute: " CHANGED
+    done
+fi
+
+# Generate the as-set.
+if [ "$DEBUG" = "1" ]; then
+        echo "DEBUG: generating the as-set"
+fi
+
+## setting some static vars for now
+
+echo "password:       $AUTHPW"
+echo " "
+echo "as-set:         $AS_SET"
+echo "descr:          $DESCR"
+#### iterate members:
+while IFS= read -r MEMBER; do
+	echo "members:        $MEMBER"
+done < "$MEMBERS"
+
+
+### Do the Lumen remarks if $LUMEN=1
+#### Evaluate IRR sources in this order: NTTCOM,RADB,RIPE,ALTDB,LEVEL3,ARIN
+if [ "$LUMEN" = "1" ]; then
+#### Only evaulate as-set, not aut-num
+LIST_OF_AS_SETS=`cat $MEMBERS | grep "AS-"`
+
+	if [ "$DEBUG" = "1" ]; then
+		echo "DEBUG: Start Lumen remarks"
+	fi
+	source_irrs=("NTTCOM" "RADB" "RIPE" "ALTDB" "LEVEL3" "ARIN")
+	
+	while IFS= read -r MEMBER; do
+		found=false
+		# Iterate over the source IRRs
+    for SOURCE_IRR in "${source_irrs[@]}"; do
+        # Run the whois command
+	if [ "$DEBUG" = "1" ]; then
+		echo "DEBUG: -------"
+		echo "DEBUG: running: $WHOIS -h rr.ntt.net -s $SOURCE_IRR $MEMBER"
+	fi
+        output=$($WHOIS -h rr.ntt.net -s "$SOURCE_IRR" "$MEMBER")
+
+	# Check if the output contains the source
+	if [[ $output == *"$SOURCE_IRR"* ]]; then
+		if [ "$DEBUG" = "1" ]; then
+    			echo "DEBUG: Found $MEMBER in $SOURCE_IRR"
+		fi
+		echo "remarks:        Level3 members: $SOURCE_IRR::$MEMBER"
+    		found=true
+    		break  # Exit the loop once a match is found
+	fi
+
+	# Check if the output indicates no entries found
+	if [[ $output == *"% No entries found"* ]]; then
+    		echo "$MEMBER not found in $SOURCE_IRR"
+	fi
+    	done
+
+    # If no sources found a match, exit with an error message
+    if ! $found; then
+        echo "WARNING: No IRR object found for $MEMBER in any registry. as-set will not function as intended!"
+    fi
+done <<< $LIST_OF_AS_SETS
+fi
+
+### add the rest of the attributes
+echo "tech-c:         $TECH_C"
+echo "admin-c:        $ADMIN_C"
+echo "notify:         $NOTIFY"
+echo "mnt-by:         $MNT"
+echo "changed:        $CHANGED"
+echo "source:         $SOURCE"
+

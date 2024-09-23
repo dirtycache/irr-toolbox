@@ -1,0 +1,7 @@
+no ip prefix-list PL4-AS_SET-($irr_src)-($as_set_name)
+ip prefix-list PL4-AS_SET-($irr_src)-($as_set_name) ($seq) permit ($prefix) le 24
+
+route-map Tachus-in permit 10
+ match ip address prefix-list Tachus-blocks
+ set local-preference 120 
+ set extcommunity RT  394437:300  additive

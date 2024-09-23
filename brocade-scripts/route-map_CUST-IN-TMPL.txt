@@ -1,0 +1,6 @@
+no route-map RM-($as_set_name)-IN
+route-map RM-($as_set_name)-IN permit 10
+ match ip address prefix-list PL4-AS_SET-($irr_src)-($as_set_name)
+ set local-preference 120 
+ set extcommunity RT  394437:300  additive
+!

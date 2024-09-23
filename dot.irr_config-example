@@ -1,0 +1,33 @@
+## NOTE: maintain double quotes around these variables!
+#
+# Commented lines are default behavior
+#
+# Which registry to query.
+# Some choices are: rr.ntt.net, whois.radb.net, rr.arin.net, rr.level3.com
+#IRR_HOST="rr.ntt.net"
+
+# The name of the registry into which you want to place your object
+# NTTCOM RADB RIPE ALTDB LEVEL3 et al
+SOURCE=NTTCOM
+
+# Your maintainer, who owns the object
+MNT="MAINT-FOO"
+
+# Email address to blame via changed: attribute
+CHANGED="alias@email.com"
+
+# as-set admin and tech contacts (NIC handle)
+ADMIN_C="IPADM882-ARIN"
+TECH_C="IPADM882-ARIN"
+
+# notify attribute - email address
+NOTIFY="alias@email.com"
+
+# your plaintext IRR password. If you prefer not to
+# place this in this file, it will be prompted for
+# (and only appear to stdout with the generated object)
+#AUTHPW="IRR.Config.Default.DummyValue"
+
+# Choose either "line" for 1 member aut-num or as-set per line,
+# or "comma" for groups of four members per line
+#FORMAT="line"

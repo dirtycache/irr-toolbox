@@ -1,0 +1,5 @@
+delete policy prefix-list PL4-AS_SET-($irr_src)-($as_set_name)
+set policy prefix-list PL4-AS_SET-($irr_src)-($as_set_name) rule ($seq) action 'permit'
+set policy prefix-list PL4-AS_SET-($irr_src)-($as_set_name) rule ($seq) prefix ($prefix)
+set policy prefix-list PL4-AS_SET-($irr_src)-($as_set_name) rule ($seq) le 24
+
