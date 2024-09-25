@@ -18,18 +18,18 @@
 # Usage function to display help message
 usage() {
     echo " "
-    echo "$0 - get prefixes by as-set from IRR"
+    echo "irr-toolbox:recurse-prefixes - get prefixes by as-set from IRR"
     echo " "
     echo "Recurse a given as-set object through member aut-nums and member as-sets which themselves contain."
     echo "aut-nums, until the end-of-recursion aut-num is reached. Query aut-num objects for originated prefixes."
     echo " "
-    echo "Usage: $0 (-a|--as-set <as_set_name>) [-s|--source <irr_source> -3|--level3 --debug -h|--help]"
+    echo "Usage: $0 <as_set_name> [-s|--source <irr_source> -3|--level3|--lumen] <as_set_name> --debug -h|--help]"
     echo " "
-    echo "          -a|--as-set <as_set_name>    # The as-set object you wish to enumerate"
+    echo "          <as_set_name>                # The as-set object you wish to enumerate"
     echo "          -s|--source <irr_source>     # Name of IRR to query such as NTTCOM, RADB, ALTDB, LEVEL3"
     echo "                                         See https://irr.net/registry for full list of SOURCE options"
     echo "                                         Defaults to NTTCOM if not specified"
-    echo "          -3|--level3                  # Also parse as-set for 'remarks: Level3 members:' and walk"
+    echo "          -3|--level3|--lumen          # Also parse as-set for 'remarks: Level3 members:' and walk"
     echo "                                         recursion for Lumen filtergen, comparing to 'members:' recursion"
     echo "          --debug                      # Enable script debugging output"
     echo "          -h|--help                    # Print this help message and exit"
@@ -42,14 +42,59 @@ if [ $# -eq 0 ]; then
     usage
 fi
 
+## defaults for input variables
+SOURCE="NTTCOM"
+AS_SET="$1"
+LUMEN=0
+DEBUG=0
+
+# Parse the command line options
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        -s|--source) SOURCE="$2"; shift 2;;
+        -3|--level3|--lumen) LUMEN=1; shift 1;;
+        --debug) DEBUG=1; shift 1;;
+        -h|--help) usage;;
+        --) shift; break;;  # End of options
+        -*) echo "Unknown option: $1"; usage;;
+        *) AS_SET="$1"; shift;;  # Handle positional argument
+    esac
+done
+
+# Ensure required options are set
+if [[ -z "$AS_SET" ]]; then
+    echo "Error: <as_set_name> is required!"
+    usage
+fi
+
 # Initialize variables
 ## make sure we have standard system stuff and utilies for all necessary commands
+### Get the bash version
+if [ "$DEBUG" = "1" ]; then
+    echo "DEBUG: checking bash version"
+fi
+bash_version_major="${BASH_VERSINFO[0]}"
+if [ "$DEBUG" = "1" ]; then
+    echo "DEBUG: bash_version_major: [$bash_version_major]"
+fi
+### Check if the version is less than 5
+if (( bash_version_major < 5 )); then
+	if [ "$DEBUG" = "1" ]; then
+    		echo "DEBUG: bash version is < 5; check failed"
+	fi
+    echo "ERROR: bash v5 required" && exit 1
+else
+        if [ "$DEBUG" = "1" ]; then
+                echo "DEBUG: bash version not < 5; check succeeded"
+        fi
+fi
+
 GREP=$(command -v grep)
 if [ "$DEBUG" = "1" ]; then
     echo "DEBUG: checking command -v grep"
 fi
 if [ -z "$GREP" ]; then
-    echo "ERROR: no command found for grep. Please check your path." && exit 1
+    echo "ERROR: no command found for grep. Please check your path" && exit 1
 else
     if [ "$DEBUG" = "1" ]; then
         echo "DEBUG: grep found: [$GREP]"
@@ -60,7 +105,7 @@ if [ "$DEBUG" = "1" ]; then
     echo "DEBUG: checking command -v awk"
 fi
 if [ -z "$AWK" ]; then
-    echo "ERROR: no command found for awk. Please check your path." && exit 1
+    echo "ERROR: no command found for awk. Please check your path" && exit 1
 else
     if [ "$DEBUG" = "1" ]; then
         echo "DEBUG: awk found: [$AWK]"
@@ -71,7 +116,7 @@ if [ "$DEBUG" = "1" ]; then
     echo "DEBUG: checking command -v tr"
 fi
 if [ -z "$TR" ]; then
-    echo "ERROR: no command found for tr. Please check your path." && exit 1
+    echo "ERROR: no command found for tr. Please check your path" && exit 1
 else
     if [ "$DEBUG" = "1" ]; then
         echo "DEBUG: tr found: [$TR]"
@@ -82,7 +127,7 @@ if [ "$DEBUG" = "1" ]; then
     echo "DEBUG: checking command -v tail"
 fi
 if [ -z "$TAIL" ]; then
-    echo "ERROR: no command found for tail. Please check your path." && exit 1
+    echo "ERROR: no command found for tail. Please check your path" && exit 1
 else
     if [ "$DEBUG" = "1" ]; then
         echo "DEBUG: tail found: [$TAIL]"
@@ -94,27 +139,13 @@ if [ "$DEBUG" = "1" ]; then
     echo "DEBUG: checking command -v bgpq4"
 fi
 if [ -z "$BGPQ4" ]; then
-    echo "ERROR: no command found for bgpq4. Please check your path." && exit 1
+    echo "ERROR: no command found for bgpq4. Please check your path" && exit 1
 else
     if [ "$DEBUG" = "1" ]; then
         echo "DEBUG: bgpq4 found: [$BGPQ4]"
     fi
 fi
 
-## Mac default /usr/bin/whois is insufficient
-UNAME=$(uname)
-if [ "$DEBUG" = "1" ]; then
-    echo "DEBUG: UNAME: [$UNAME]"
-fi
-if [ "$UNAME" = "Darwin" ]; then
-    if [ "$DEBUG" = "1" ]; then
-        echo "DEBUG: UNAME: $UNAME matches Darwin, setting WHOIS to /opt/homebrew/opt/whois/bin/whois"
-    fi
-    WHOIS="/opt/homebrew/opt/whois/bin/whois"
-    if [ ! -f "$WHOIS" ]; then
-        echo "ERROR: please install whois by running 'brew install whois' and then retry." && exit 1
-    fi
-fi
 if [ "$DEBUG" = "1" ]; then
     echo "DEBUG: checking command -v whois"
 fi
@@ -126,12 +157,34 @@ else
         echo "DEBUG: whois found: [$WHOIS]"
     fi
 fi
+## Mac default /usr/bin/whois is insufficient
+UNAME=$(uname)
+if [ "$DEBUG" = "1" ]; then
+    echo "DEBUG: UNAME: [$UNAME]"
+fi
+if [ "$UNAME" = "Darwin" ]; then
+    if [ "$DEBUG" = "1" ]; then
+        echo "DEBUG: UNAME: UNAME [$UNAME] matches Darwin, setting WHOIS to /opt/homebrew/opt/whois/bin/whois"
+    fi
+    WHOIS="/opt/homebrew/opt/whois/bin/whois"
+    if [ ! -f "$WHOIS" ]; then
+	if [ "$DEBUG" = "1" ]; then
+		echo "DEBUG: whois not found"
+	fi
+        echo "ERROR: please install whois by running 'brew install whois' and then retry" && usage
+    else
+	if [ "$DEBUG" = "1" ]; then
+                echo "DEBUG: whois found: [$WHOIS]"
+        fi
+    fi
+fi
 
-## defaults for input variables
-SOURCE="NTTCOM"
-AS_SET=""
-LUMEN=0
-DEBUG=0
+if [ "$DEBUG" = "1" ]; then
+    echo "DEBUG: SOURCE: [$SOURCE]"
+    echo "DEBUG: AS-SET: [$AS_SET]"
+    echo "DEBUG: LUMEN: [$LUMEN]"
+    echo "DEBUG: DEBUG: [$DEBUG]"
+fi
 
 ## function get_member_autnums
 get_member_autnums() { grep "^members:" | awk '{print $2}' | tr , '\n' | grep -v "AS-"; }
@@ -148,54 +201,28 @@ declare -a AS_SET_STACK
 ## function validate_as_set
 validate_as_set() {
     local as_set="$1"
+    if [ "$DEBUG" = "1" ]; then
+	echo "DEBUG: executing validate_as_set() for as-set: [$as_set]"
+    fi
     if [[ "$as_set" =~ ^(AS(([0-9]+):AS-.*)|^AS-.*)$ ]]; then
         if [ "$DEBUG" = "1" ]; then
-            echo "DEBUG: Valid AS_SET"
+            echo "DEBUG: validate_as_set() returns 0 for valid format of AS_SET: [$as_set]"
         fi
         return 0  # Valid AS_SET
     else
         if [ "$DEBUG" = "1" ]; then
-            echo "DEBUG: Invalid AS_SET"
+            echo "DEBUG: valid_as_set() returns 1 for invalid AS_SET: [$as_set]"
         fi
         return 1  # Invalid AS_SET
     fi
 }
-
-# Parse the command line options
-while [[ "$#" -gt 0 ]]; do
-    case $1 in
-        -s|--source) SOURCE="$2"; shift 2;;
-        -a|--as-set) AS_SET="$2"; shift 2;;
-        -3|--level3) LUMEN=1; shift 1;;
-        --debug) DEBUG=1; shift 1;;
-        -h|--help) usage;;
-        *) echo "Unknown option: $1"; usage;;
-    esac
-done
-
-# Ensure required options are set
-if [[ -z "$AS_SET" ]]; then
-    echo "Error: option -a|--as-set <as_set_name> is required!"
-    usage
-fi
-
-if [ "$DEBUG" = "1" ]; then
-    echo "DEBUG: SOURCE: [$SOURCE]"
-    echo "DEBUG: AS-SET: [$AS_SET]"
-    echo "DEBUG: LUMEN: [$LUMEN]"
-    echo "DEBUG: DEBUG: [$DEBUG]"
-fi
 
 # Validate AS_SET
 if [ "$DEBUG" = "1" ]; then
     echo "DEBUG: Validating AS-SET"
 fi
 if ! validate_as_set "$AS_SET"; then
-    echo "Error: Invalid AS-SET format: $AS_SET"
-    until validate_as_set "$AS_SET"; do
-        echo "Invalid as-set format. Please try again."
-        read -p "Please input a valid object for the mnt-by attribute: " AS_SET
-    done
+    echo "ERROR: Invalid AS-SET format: [$as-set]" && usage
 fi
 
 # Recurse AS_SET
@@ -266,7 +293,7 @@ process_as_sets() {
     fi
 
     if [[ -z "$MEMBERS" && -z "$MEMBERS_ASS" ]]; then
-        echo "ERROR: AS-SET $AS_SET has no members."
+        echo "ERROR: AS-SET [$AS_SET] either not found in $SOURCE or contains no members."
         return
     fi
 
