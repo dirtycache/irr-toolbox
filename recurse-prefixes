@@ -324,12 +324,13 @@ process_as_sets() {
                 fi
 
                 # Fetch the prefixes using bgpq4 and replace newlines with spaces
-                IFS=' ' PREFIXES=($($BGPQ4 -L 1 "$MEMBER" | tail -n +2 | sed 's/^ip prefix-list NN permit //g' | tr '\n' ' '))
+                IFS=' ' PREFIXES=($($BGPQ4 -L 1 "$MEMBER" | tail -n +2 | sed 's/^ip prefix-list NN permit //g' | sed 's/! generated prefix-list NN is empty//g' | sed 's/ip prefix-list NN deny.*//g' | tr '\n' ' '))
 
                 if [ ${#PREFIXES[@]} -eq 0 ]; then
                     if [ "$DEBUG" = "1" ]; then
                         echo "DEBUG: No prefixes found for aut-num: [$MEMBER]"
                     fi
+		    echo -e "${current_as_set_chain} $MEMBER <--- WARNING: aut-num matches no prefix origin!"
                     continue
                 fi
 
