@@ -23,9 +23,9 @@ usage() {
     echo "Recurse a given as-set object through member aut-nums and member as-sets which themselves contain."
     echo "aut-nums, until the end-of-recursion aut-num is reached. Query aut-num objects for originated prefixes."
     echo " "
-    echo "Usage: $0 <as_set_name> [-s|--source <irr_source> -3|--level3|--lumen] <as_set_name> --debug -h|--help]"
+    echo "Usage: $0 <as_set_name|aut-num> [-s|--source <irr_source> -3|--level3|--lumen] <as_set_name> --debug -h|--help]"
     echo " "
-    echo "          <as_set_name>                # The as-set object you wish to enumerate"
+    echo "          <as_set_name|aut-num>        # The IRR object you wish to enumerate"
     echo "          -s|--source <irr_source>     # Name of IRR to query such as NTTCOM, RADB, ALTDB, LEVEL3"
     echo "                                         See https://irr.net/registry for full list of SOURCE options"
     echo "                                         Defaults to NTTCOM if not specified"
@@ -204,25 +204,25 @@ validate_as_set() {
     if [ "$DEBUG" = "1" ]; then
 	echo "DEBUG: executing validate_as_set() for as-set: [$as_set]"
     fi
-    if [[ "$as_set" =~ ^(AS(([0-9]+):AS-.*)|^AS-.*)$ ]]; then
+    if [[ "$as_set" =~ ^(AS(([0-9]+):AS-.*)|^AS-.*|^AS[0-9]+)$ ]]; then
         if [ "$DEBUG" = "1" ]; then
-            echo "DEBUG: validate_as_set() returns 0 for valid format of AS_SET: [$as_set]"
+            echo "DEBUG: validate_as_set() returns 0 for valid format of AS_SET or AUT-NUM: [$as_set]"
         fi
         return 0  # Valid AS_SET
     else
         if [ "$DEBUG" = "1" ]; then
             echo "DEBUG: valid_as_set() returns 1 for invalid AS_SET: [$as_set]"
         fi
-        return 1  # Invalid AS_SET
+        return 1  # Invalid AS_SET or AUT-NUM
     fi
 }
 
 # Validate AS_SET
 if [ "$DEBUG" = "1" ]; then
-    echo "DEBUG: Validating AS-SET"
+    echo "DEBUG: Validating AS-SET or AUT-NUM"
 fi
 if ! validate_as_set "$AS_SET"; then
-    echo "ERROR: Invalid AS-SET format: [$as-set]" && usage
+    echo "ERROR: Invalid AS-SET or AUT-NUM format: [$as-set]" && usage
 fi
 
 # Recurse AS_SET
