@@ -330,14 +330,18 @@ process_as_sets() {
                     if [ "$DEBUG" = "1" ]; then
                         echo "DEBUG: No prefixes found for aut-num: [$MEMBER]"
                     fi
-		    echo -e "${current_as_set_chain} $MEMBER <--- WARNING: aut-num matches no prefix origin!"
+		    echo -e "${current_as_set_chain} $MEMBER <--- WARNING: aut-num is empty (enumerates no prefix origin: attributes)!"
                     continue
                 fi
 
                 # Print only complete chains and valid prefixes
                 for PREFIX in "${PREFIXES[@]}"; do
                     if [ -n "$current_as_set_chain" ] && [ -n "$MEMBER" ] && [ -n "$PREFIX" ]; then
+			((irr_prefix_count++))  # Increment the prefix counter
                         echo -e "${current_as_set_chain} $MEMBER PREFIX: $PREFIX"
+			if [ "$DEBUG" = "1" ]; then
+				echo "DEBUG: irr_prefix_count: [$irr_prefix_count]"
+			fi
                     fi
                 done
             fi
@@ -376,7 +380,9 @@ if [ "$DEBUG" = "1" ]; then
 fi
 
 # Process initial AS-SET and its aut-nums
+irr_prefix_count=0
 process_as_sets "$AS_SET"
 if [ "$DEBUG" = "1" ]; then
-	echo "end of iteration for processing initial as-set and aut-nums from AS_SET"
+	echo "DEBUG: end of iteration for processing initial as-set and aut-nums from AS_SET"
 fi
+echo "Total prefix count (IRR): $irr_prefix_count"
