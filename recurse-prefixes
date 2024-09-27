@@ -326,14 +326,18 @@ process_as_sets() {
                     echo "DEBUG: Fetching routes from source [$SOURCE] origin: [$MEMBER]"
                 fi
 		# Get origin: without SOURCE restriction so we can check for overlapping route objects
-		IFS= IRR_OUT=($("$WHOIS" -h "$IRR" "\!g -i origin "$MEMBER"" | grep -e "^route:\|^source:" |
-			awk '/^route:/ || /^source:/ { 
+		# REMOVE the nl when done debugging, dipshit
+		IFS= IRR_OUT=($("$WHOIS" -h "$IRR" "\!g -i origin "$MEMBER"" | nl -ba -w2 | grep -e "^.*route:\|^.*source:" |
+			# REMOVE the .* when you remove bl
+			awk '/^.*route:/ || /^.*source:/ { 
 					if ($0 ~ /^source:/ && /RPKI/) next;  # Skip RPKI sources
 						print
 					}
 				')) 
 
-		IFS=' ' PREFIXES=($(grep -e "^route:" <<< "$IRR_OUT" | awk '{print $2}' | tr '\n' ' '))
+		# REMOVE the nl debugging, and change awk back from $3 to $2, dipshit
+		#IFS=' ' PREFIXES=($(grep -e "^route:" <<< "$IRR_OUT" | awk '{print $2}' | tr '\n' ' '))
+		IFS=' ' PREFIXES=($(grep -e "^.*route:" <<< "$IRR_OUT" | awk '{print $3}' | tr '\n' ' '))
 	
 		if [ "$DEBUG" = "1" ]; then
 			echo "DEBUG: IRR_OUT: [$IRR_OUT]"
@@ -351,45 +355,52 @@ process_as_sets() {
                 for PREFIX in "${PREFIXES[@]}"; do
                     if [ -n "$current_as_set_chain" ] && [ -n "$MEMBER" ] && [ -n "$PREFIX" ]; then
 			if [ "$DEBUG" = "1" ]; then
-				echo "DEBUG: output loop - prefix in MEMBER: [$MEMBER], increment counter"
-				echo "DEBUG: determine the sources for this route object"
+				echo "DEBUG: output loop - PREFIX: ["$PREFIX"] in MEMBER: [$MEMBER], increment counter"
+				echo "DEBUG: determine the sources for route object for ["$PREFIX"]"
 			fi
 
-ROUTE_SRC=$(echo "$IRR_OUT" | awk -v prefix="$PREFIX" -F: '
-    /^route:/ {
-        gsub(/^\s+/, "", $0); 
-        if ($0 ~ prefix) {
-            found_route=1; 
-            source_found=0;  # Reset for a new route
-            next 
-        }
-    }
-    found_route && NF {
-        if ($0 ~ /^source:/ && !/RPKI/) {
-            sub(/^source:\s*/, ""); 
-            split($0, arr);  
-            print arr[1];    
-            source_found=1;   # Mark that a source was found
-        }
-    }
-    found_route && !NF { 
-        if (!source_found) { 
-            found_route=0; 
-        } else { 
-            found_route=0; 
-            source_found=0; 
-        }
-    }
-')
+#REMOVE .* dipshit
+    #/^route:/ {
+IFS=' ' ROUTE_SRC=$(echo "$IRR_OUT" | awk '
+/^.*route:/ || 
+	/^.*source:/ 
+	{if ($0 ~ /^.*source:/ && /RPKI/) 
+		next;
+		print
+	}' | awk -v prefix="$PREFIX" -F: '
+/^.*route:/ 
+{ gsub(/^\s+/, "", $0); 
+	if ($0 ~ prefix) { found_route=1; 
+		source_found=0; 
+		next 
+	} 
+} 
+found_route && NF { 
+if ($0 ~ /^.*source:/ && !/RPKI/) 
+	{ sub(/^.*source:\s*/, ""); 
+		split($0, arr);  
+		print arr[1]; 
+		source_found=1; 
+	} 
+} 
+found_route && !NF { 
+if (!source_found) 
+	{ found_route=0; } 
+else 
+	{ found_route=0; 
+		source_found=0; 
+	} 
+} ' | tr '\n' ' '
+)
 
 	    		if [ "$DEBUG" = "1" ]; then
 				echo "DEBUG: ROUTE_SRC: [$ROUTE_SRC]"
 			fi
 			((irr_prefix_count++))  # Increment the prefix counter
 			if [ "$DEBUG" = "1" ]; then
-				echo "DEBUG: echo for PREFIX: [$PREFIX] from IRR: [$SOURCE] with object source: attribute [$ROUTE_SRC]"
+				echo "DEBUG: echo for PREFIX: ["$PREFIX"] from IRR: ["$SOURCE"] with attribute [source: "$ROUTE_SRC"]"
 			fi
-			echo -e "${current_as_set_chain} $MEMBER PREFIX: $PREFIX (route object found in $SOURCE with source: $ROUTE_SRC)"
+			echo -e "${current_as_set_chain} $MEMBER PREFIX: $PREFIX (route object found in $SOURCE with attribute [source: "$ROUTE_SRC"])"
 			if [ "$DEBUG" = "1" ]; then
 				echo "DEBUG: irr_prefix_count: [$irr_prefix_count]"
 			fi
