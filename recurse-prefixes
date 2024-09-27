@@ -248,6 +248,8 @@ case "$SOURCE" in
     *) echo "ERROR: Unknown source: $SOURCE" && exit 1;;
 esac
 
+SOURCES="AFRINIC ALTDB APNIC ARIN BELL BBOI CANARIE IDNIC JPIRR LACNIC LEVEL3 NESTEGG NTTCOM PANIX RADB REACH RIPE TC"
+
 # Initialize arrays to track visited aut-nums and AS-SETs
 declare -A VISITED_AUT_NUMS
 declare -A VISITED_AS_SETS
@@ -320,25 +322,77 @@ process_as_sets() {
                 VISITED_AUT_NUMS["$MEMBER"]=1
 
                 if [ "$DEBUG" = "1" ]; then
-                    echo "DEBUG: Running bgpq4 for aut-num: [$MEMBER]"
+                    echo "DEBUG: IRR: ["$IRR"]"
+                    echo "DEBUG: Fetching routes from source [$SOURCE] origin: [$MEMBER]"
                 fi
+		# Get origin: without SOURCE restriction so we can check for overlapping route objects
+#		IFS= IRR_OUT=($("$WHOIS" -h "$IRR" "\!g -i origin "$MEMBER"" | grep -e "^route:\|^source:" )) 
 
-                # Fetch the prefixes using bgpq4 and replace newlines with spaces
-                IFS=' ' PREFIXES=($($BGPQ4 -L 1 "$MEMBER" | tail -n +2 | sed 's/^ip prefix-list NN permit //g' | sed 's/! generated prefix-list NN is empty//g' | sed 's/ip prefix-list NN deny.*//g' | tr '\n' ' '))
+IRR_OUT=$(whois -h rr.ntt.net "\!g -i origin AS53763" | awk '
+    /^route:/ || /^source:/ {
+        if ($0 ~ /^source:/ && /RPKI/) next;  # Skip RPKI sources
+        print
+    }
+')
 
-                if [ ${#PREFIXES[@]} -eq 0 ]; then
+
+		IFS=' ' PREFIXES=($(grep -e "^route:" <<< "$IRR_OUT" | awk '{print $2}' | tr '\n' ' '))
+	
+		if [ "$DEBUG" = "1" ]; then
+			echo "DEBUG: IRR_OUT: [$IRR_OUT]"
+		fi
+		
+		if [ ${#PREFIXES[@]} -eq 0 ]; then
                     if [ "$DEBUG" = "1" ]; then
-                        echo "DEBUG: No prefixes found for aut-num: [$MEMBER]"
+                        echo "DEBUG: No prefix origins found for aut-num: ["$MEMBER"] in ["$SOURCE"]"
                     fi
-		    echo -e "${current_as_set_chain} $MEMBER <--- WARNING: aut-num is empty (enumerates no prefix origin: attributes)!"
+		    echo -e "${current_as_set_chain} $MEMBER <--- WARNING: aut-num has no route/route6 objects matching origin ["$MEMBER"] in ["$SOURCE"]"
                     continue
                 fi
 
                 # Print only complete chains and valid prefixes
                 for PREFIX in "${PREFIXES[@]}"; do
                     if [ -n "$current_as_set_chain" ] && [ -n "$MEMBER" ] && [ -n "$PREFIX" ]; then
+			if [ "$DEBUG" = "1" ]; then
+				echo "DEBUG: output loop - prefix in MEMBER: [$MEMBER], increment counter"
+				echo "DEBUG: determine the sources for this route object"
+			fi
+
+ROUTE_SRC=$(echo "$IRR_OUT" | awk -v prefix="$PREFIX" -F: '
+    /^route:/ {
+        gsub(/^\s+/, "", $0); 
+        if ($0 ~ prefix) {
+            found_route=1; 
+            source_found=0;  # Reset for a new route
+            next 
+        }
+    }
+    found_route && NF {
+        if ($0 ~ /^source:/ && !/RPKI/) {
+            sub(/^source:\s*/, ""); 
+            split($0, arr);  
+            print arr[1];    
+            source_found=1;   # Mark that a source was found
+        }
+    }
+    found_route && !NF { 
+        if (!source_found) { 
+            found_route=0; 
+        } else { 
+            found_route=0; 
+            source_found=0; 
+        }
+    }
+')
+
+	    		if [ "$DEBUG" = "1" ]; then
+				echo "DEBUG: ROUTE_SRC: [$ROUTE_SRC]"
+			fi
 			((irr_prefix_count++))  # Increment the prefix counter
-                        echo -e "${current_as_set_chain} $MEMBER PREFIX: $PREFIX"
+			if [ "$DEBUG" = "1" ]; then
+				echo "DEBUG: echo for PREFIX: [$PREFIX] from IRR: [$SOURCE] with object source: attribute [$ROUTE_SRC]"
+			fi
+			echo -e "${current_as_set_chain} $MEMBER PREFIX: $PREFIX (route object found in $SOURCE with source: $ROUTE_SRC)"
 			if [ "$DEBUG" = "1" ]; then
 				echo "DEBUG: irr_prefix_count: [$irr_prefix_count]"
 			fi
