@@ -334,8 +334,6 @@ process_as_sets() {
 	
 		if [ "$DEBUG" = "1" ]; then
 			echo "DEBUG: IRR_OUT: ["$IRR_OUT"]"
-			#echo "DEBUG: IRR_OUT through od -c"
-			#echo $(echo "$IRR_OUT" | od -c)
 		fi
 		
 		if [ ${#PREFIXES[@]} -eq 0 ]; then
@@ -358,14 +356,13 @@ process_as_sets() {
 
 	    		if [ "$DEBUG" = "1" ]; then
 				echo "DEBUG: ROUTE_SRC: [$ROUTE_SRC]"
-				#echo "DEBUG: ROUTE_SRC through od -c"
-				#echo $(echo "$ROUTE_SRC" | od -c)
 			fi
 			((irr_prefix_count++))  # Increment the prefix counter
 			if [ "$DEBUG" = "1" ]; then
-				echo "DEBUG: echo for PREFIX: ["$PREFIX"] from IRR: ["$SOURCE"] with attribute [source: "$ROUTE_SRC"]"
+				echo "DEBUG: echo output"
 			fi
-			echo -e "${current_as_set_chain} $MEMBER PREFIX: $PREFIX (route object found in $SOURCE with attribute [source: "$ROUTE_SRC"])"
+			echo -e "${current_as_set_chain} $MEMBER PREFIX: $PREFIX ## [route: in $SOURCE with source: "$ROUTE_SRC"]"
+
 			if [ "$DEBUG" = "1" ]; then
 				echo "DEBUG: irr_prefix_count: [$irr_prefix_count]"
 			fi
