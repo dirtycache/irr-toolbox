@@ -326,15 +326,12 @@ process_as_sets() {
                     echo "DEBUG: Fetching routes from source [$SOURCE] origin: [$MEMBER]"
                 fi
 		# Get origin: without SOURCE restriction so we can check for overlapping route objects
-#		IFS= IRR_OUT=($("$WHOIS" -h "$IRR" "\!g -i origin "$MEMBER"" | grep -e "^route:\|^source:" )) 
-
-IRR_OUT=$(whois -h rr.ntt.net "\!g -i origin AS53763" | awk '
-    /^route:/ || /^source:/ {
-        if ($0 ~ /^source:/ && /RPKI/) next;  # Skip RPKI sources
-        print
-    }
-')
-
+		IFS= IRR_OUT=($("$WHOIS" -h "$IRR" "\!g -i origin "$MEMBER"" | grep -e "^route:\|^source:" |
+			awk '/^route:/ || /^source:/ { 
+					if ($0 ~ /^source:/ && /RPKI/) next;  # Skip RPKI sources
+						print
+					}
+				')) 
 
 		IFS=' ' PREFIXES=($(grep -e "^route:" <<< "$IRR_OUT" | awk '{print $2}' | tr '\n' ' '))
 	
