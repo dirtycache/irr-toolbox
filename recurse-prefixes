@@ -376,6 +376,7 @@ process_as_sets() {
     while IFS= read -r MEMBER_ASS; do
         MEMBER_ASS=$(echo "$MEMBER_ASS" | tr -d '[:space:][:cntrl:]')
 
+	# "don't want none unless you got buns, hun!" - Dan
         if [[ -z "$MEMBER_ASS" ]]; then
             continue
         fi
