@@ -326,7 +326,9 @@ process_as_sets() {
                     echo "DEBUG: Fetching routes from source [$SOURCE] origin: [$MEMBER]"
                 fi
 		# Get origin: without SOURCE restriction so we can check for overlapping route objects
-		IFS= IRR_OUT=($("$WHOIS" -h "$IRR" "\!g -i origin "$MEMBER"" | grep -e "^route:\|^source:")) 
+		# Also strip out RPKI sources we don't care about, at least not currently.
+		IFS= IRR_OUT=($("$WHOIS" -h "$IRR" "\!g -i origin "$MEMBER"" | grep -e "^route:\|^source:" | awk '/^source:/ && /RPKI/ {skip=1; next} skip {skip=0; next} {if ($0 ~ /^route:/) route=$0; else if ($0 ~ /^source:/ && route != "") {print route; print $0; route=""}}'
+)) 
 
 		IFS=' ' PREFIXES=($(grep -e "^route:" <<< "$IRR_OUT" | awk '{print $2}' | tr '\n' ' '))
 	
@@ -352,7 +354,7 @@ process_as_sets() {
 				echo "DEBUG: determine the sources for route object for ["$PREFIX"]"
 			fi
 
-			ROUTE_SRC=$(echo -e "$IRR_OUT" | grep -A1 "$PREFIX" | awk '/^route:/ || /^source:/ {if ($0 ~ /^source:/ && /RPKI/) next;print}' | awk '/^route:/ {route=$0; next} /^source:/ {if (route != "") {print route; print $0; route=""}}' | awk 'NR == 2 {print $2}') 
+			ROUTE_SRC=$(echo -e "$IRR_OUT" | grep -A1 "$PREFIX" | awk 'NR == 2 {print $2}') 
 
 	    		if [ "$DEBUG" = "1" ]; then
 				echo "DEBUG: ROUTE_SRC: [$ROUTE_SRC]"
