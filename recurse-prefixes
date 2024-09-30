@@ -208,7 +208,7 @@ validate_as_set() {
         if [ "$DEBUG" = "1" ]; then
             echo "DEBUG: validate_as_set() returns 0 for valid format of AS_SET or AUT-NUM: [$as_set]"
         fi
-        return 0  # Valid AS_SET
+        return 0  # Valid AS_SET or AUT-NUM
     else
         if [ "$DEBUG" = "1" ]; then
             echo "DEBUG: valid_as_set() returns 1 for invalid AS_SET: [$as_set]"
@@ -222,7 +222,7 @@ if [ "$DEBUG" = "1" ]; then
     echo "DEBUG: Validating AS-SET or AUT-NUM"
 fi
 if ! validate_as_set "$AS_SET"; then
-    echo "ERROR: Invalid AS-SET or AUT-NUM format: [$as-set]" && usage
+    echo "ERROR: Invalid AS-SET or AUT-NUM format" && usage
 fi
 
 # Recurse AS_SET
@@ -248,11 +248,10 @@ case "$SOURCE" in
     *) echo "ERROR: Unknown source: $SOURCE" && exit 1;;
 esac
 
-SOURCES="AFRINIC ALTDB APNIC ARIN BELL BBOI CANARIE IDNIC JPIRR LACNIC LEVEL3 NESTEGG NTTCOM PANIX RADB REACH RIPE TC"
-
-# Initialize arrays to track visited aut-nums and AS-SETs
+# Initialize arrays to track visited objects
 declare -A VISITED_AUT_NUMS
 declare -A VISITED_AS_SETS
+declare -A VISITED_PREFIX
 
 modify_as_chain() {
     local current_chain="$1"
@@ -275,6 +274,7 @@ modify_as_chain() {
     echo "$current_chain"
 }
 
+ASS_EXIST_COUNT=0
 process_as_sets() {
     local AS_SET="$1"
 
@@ -285,17 +285,86 @@ process_as_sets() {
     # Push the current AS-SET onto the stack
     AS_SET_STACK+=("$AS_SET")
 
-    # Get members
-    MEMBERS=$($WHOIS -h $IRR "$AS_SET" | get_member_autnums)
-    MEMBERS_ASS=$($WHOIS -h $IRR "$AS_SET" | get_member_as_sets)
+    # check that the specified object actually exists
+    SOURCES="AFRINIC ALTDB APNIC ARIN BELL BBOI CANARIE IDNIC JPIRR LACNIC LEVEL3 NESTEGG NTTCOM PANIX RADB REACH RIPE TC"
+    for REG in $SOURCES; do
+    case "$SOURCE" in
+    	AFRINIC) IRR="whois.afrinic.net";;
+    	ALTDB) IRR="whois.altdb.net";;
+    	APNIC) IRR="whois.apnic.net";;
+    	ARIN) IRR="rr.arin.net";;
+    	BELL) IRR="whois.in.bell.ca";;
+    	BBOI) IRR="irr.bboi.net";;
+    	CANARIE) IRR="whois.canarie.ca";;
+    	IDNIC) IRR="irr.idnic.net";;
+    	JPIRR) IRR="jpirr.nic.ad.jp";;
+    	LACNIC) IRR="irr.lacnic.net";;
+    	LEVEL3) IRR="rr.level3.net";;
+    	NESTEGG) IRR="whois.nestegg.net";;
+    	NTTCOM) IRR="rr.ntt.net";;
+    	PANIX) IRR="rrdb.access.net";;
+    	RADB) IRR="whois.radb.net";;
+    	REACH) IRR="rr.telstraglobal.net";;
+    	RIPE) IRR="whois.ripe.net";;
+    	TC) IRR="whois.bgp.net.br";;
+    esac
+	    if [ "$DEBUG" = "1" ]; then
+		    echo "DEBUG: <process_as_sets()> Looking for "$AS_SET" with source: "$REG""
+		    echo "DEBUG: <process_as_sets()> "$WHOIS" -h "$IRR" -s "$REG" "$AS_SET""
+	    fi
+            ASS_EXIST=$("$WHOIS" -h "$IRR" -s "$REG" "$AS_SET")
+	    if [ "$DEBUG" = "1" ]; then
+		    echo "DEBUG: <process_as_sets()> whois output for REG: ["$REG"] ASS_EXIST: ["$ASS_EXIST"]"
+	    fi
+            if [[ "$ASS_EXIST" = "%  No entries found for the selected source(s)." || \
+		    "$ASS_EXIST" = "%% ERROR: One or more selected sources are unavailable." ]]; then
+		    if [ "$DEBUG" = "1" ]; then
+			    echo "DEBUG: <process_as_sets()> Object ["$AS_SET"] not found querying "$SOURCE" with source: "$REG""
+			    echo "DEBUG: <process_as_sets()> ASS_EXISTS_COUNT: [$ASS_EXISTS_COUNT]"
+		    fi
+	    else
+		    if [ "$DEBUG" = "1" ]; then
+			    echo "DEBUG: <process_as_sets()> Object ["$AS_SET"] found querying "$SOURCE" with source: "$REG""
+			    echo "DEBUG: <process_as_sets()> Incrementing ASS_EXISTS_COUNT"
+		    fi
+		    ((ASS_EXISTS_COUNT++))
+		    if [ "$DEBUG" = "1" ]; then
+			    echo "DEBUG: <process_as_sets()> ASS_EXISTS_COUNT: [$ASS_EXISTS_COUNT]"
+		    fi
+	    fi
+    done
+	    if [ "$ASS_EXISTS_COUNT" -gt 1 ]; then
+		    echo "#####################################################################################################"
+		    echo "#####################################################################################################"
+		    echo "WARNING: Too much ass!"
+		    echo "Object "$AS_SET" exists $ASS_EXISTS_COUNT times across multiple IRR registries."
+		    echo "Unexpected behaviour will occur depending on source registry order of priority when building filters!"
+		    echo "#####################################################################################################"
+		    echo "#####################################################################################################"
+	    fi
+	    # reset the trip odometer on ASS_EXISTS_COUNT
+	    if [ "$DEBUG" = "1" ]; then
+		    echo "DEBUG: <process_as_sets()> exited processing loop for "$AS_SET""
+		    echo "DEBUG: resetting ASS_EXISTS_COUNT to 0"
+	    fi
+	    ASS_EXISTS_COUNT=0
 
+    # GetMembers
+    ## aut-num 
+    MEMBERS=$("$WHOIS" -h "$IRR" "$AS_SET" | get_member_autnums)
     if [ "$DEBUG" = "1" ]; then
-        echo -e "DEBUG: MEMBERS: [$MEMBERS]\n" | tr '\n' ' ' | sed 's/  /\n/'
-        echo -e "DEBUG: MEMBERS_ASS: [$MEMBERS_ASS]\n" | tr '\n' ' ' | sed 's/  /\n/'
+    	    echo "DEBUG: process_as_sets()#GetMembers> MEMBERS: ["$MEMBERS"]" 
+	    echo "DEBUG: <process_as_sets()#aut-num> |->aut-num MEMBERS: ["$MEMBERS"]"
+    fi
+    ## as-set
+    MEMBERS_ASS=$("$WHOIS" -h "$IRR" "$AS_SET" | get_member_as_sets)
+    if [ "$DEBUG" = "1" ]; then
+        echo -e "DEBUG: <process_as_sets()#as-set>> |->as-set MEMBERS_ASS: [$MEMBERS_ASS]\n" | tr '\n' ' ' | sed 's/  /\n/'
     fi
 
-    if [[ -z "$MEMBERS" && -z "$MEMBERS_ASS" ]]; then
-        echo "ERROR: AS-SET [$AS_SET] either not found in $SOURCE or contains no members."
+   if [[ -z "$MEMBERS" && -z "$MEMBERS_ASS" ]]; then
+        echo "ERROR: AS-SET [$AS_SET] either contains no members or was not found in any IRR source!"
+	# bail out of this iternation of process_as_sets()
         return
     fi
 
@@ -322,13 +391,13 @@ process_as_sets() {
                 VISITED_AUT_NUMS["$MEMBER"]=1
 
                 if [ "$DEBUG" = "1" ]; then
-                    echo "DEBUG: IRR: ["$IRR"]"
-                    echo "DEBUG: Fetching routes from source [$SOURCE] origin: [$MEMBER]"
+                    echo "DEBUG: <process_autnum> IRR: ["$IRR"]"
+                    echo "DEBUG: <process_autnum> Fetching routes from source [$SOURCE] where [origin: $MEMBER]"
                 fi
 		# Get origin: without SOURCE restriction so we can check for overlapping route objects
 		# Also strip out RPKI sources we don't care about, at least not currently.
-		IFS= IRR_OUT=($("$WHOIS" -h "$IRR" "\!g -i origin "$MEMBER"" | grep -e "^route:\|^source:" | awk '/^source:/ && /RPKI/ {skip=1; next} skip {skip=0; next} {if ($0 ~ /^route:/) route=$0; else if ($0 ~ /^source:/ && route != "") {print route; print $0; route=""}}'
-)) 
+		IFS= IRR_OUT=($("$WHOIS" -h "$IRR" "\!g -i origin "$MEMBER"" | grep -e "^route:\|^source:" | awk '/^source:/ && /RPKI/ {skip=1; next} skip && /^route:/ {skip=0} /^route:/ {route=$0} /^source:/ && !skip && route != "" {print route; print $0; route=""}'))
+
 
 		IFS=' ' PREFIXES=($(grep -e "^route:" <<< "$IRR_OUT" | awk '{print $2}' | tr '\n' ' '))
 	
@@ -340,34 +409,46 @@ process_as_sets() {
                     if [ "$DEBUG" = "1" ]; then
                         echo "DEBUG: No prefix origins found for aut-num: ["$MEMBER"] in ["$SOURCE"]"
                     fi
-		    echo -e "${current_as_set_chain} $MEMBER <--- WARNING: aut-num has no route/route6 objects matching origin: ["$MEMBER"] in source: ["$SOURCE"]"
+		    echo -e "${current_as_set_chain} $MEMBER <--- WARNING: aut-num has no route objects with attribute [origin: "$MEMBER"] in source: ["$SOURCE"]"
                     continue
                 fi
 
                 # Print only complete chains and valid prefixes
+		declare -A VISITED_PFX_SRC
+
                 for PREFIX in "${PREFIXES[@]}"; do
                     if [ -n "$current_as_set_chain" ] && [ -n "$MEMBER" ] && [ -n "$PREFIX" ]; then
 			if [ "$DEBUG" = "1" ]; then
 				echo "DEBUG: output loop - PREFIX: ["$PREFIX"] in MEMBER: [$MEMBER], increment counter"
-				echo "DEBUG: determine the sources for route object for ["$PREFIX"]"
+				echo "DEBUG: determine the sources for route object for [$PREFIX]"
 			fi
 
-			ROUTE_SRC=$(echo -e "$IRR_OUT" | grep -A1 "$PREFIX" | awk 'NR == 2 {print $2}') 
+			# Get the sources for the current prefix and store them in an array
+			IFS=' ' read -r -a ROUTE_SRC <<< $(echo -e "$IRR_OUT" | grep -A1 "$PREFIX" | awk '($1 == "source:") {print $2}' | tr '\n' ' ' | sed 's/ $//')
 
 	    		if [ "$DEBUG" = "1" ]; then
-				echo "DEBUG: ROUTE_SRC: [$ROUTE_SRC]"
+				echo "DEBUG: ROUTE_SRC: [${ROUTE_SRC[*]}]"
 			fi
-			((irr_prefix_count++))  # Increment the prefix counter
-			if [ "$DEBUG" = "1" ]; then
-				echo "DEBUG: echo output"
-			fi
-			echo -e "${current_as_set_chain} $MEMBER PREFIX: $PREFIX ## [route: in $SOURCE with source: "$ROUTE_SRC"]"
 
-			if [ "$DEBUG" = "1" ]; then
-				echo "DEBUG: irr_prefix_count: [$irr_prefix_count]"
-			fi
-                    fi
-                done
+			# Check if ROUTE_SRC has already been processed
+			for i in "${!ROUTE_SRC[@]}"; do
+				KVP="${PREFIX},${ROUTE_SRC["$i"]}"
+				if [ -z "${VISITED_PFX_SRC[$KVP]}" ]; then
+					if [ "$i" -eq 0 ]; then
+				 	# Output for the first source
+					echo "First source KVP: ["$KVP"]"
+					 ((irr_prefix_count++))  # Increment the prefix counter
+					 echo -e "${current_as_set_chain} $MEMBER PREFIX: $PREFIX ## route: -> source: [${ROUTE_SRC[0]}] [$irr_prefix_count]"
+					VISITED_PFX_SRC["$PREFIX, ${ROUTE_SRC[$i]}"]=1
+				 else
+					 echo "Second source KVP: ["$KVP"]"
+					 echo -e "${current_as_set_chain} $MEMBER PREFIX: $PREFIX ## route: -> source: [${ROUTE_SRC[$i]}] <---- WARNING: duplicate! [$irr_prefix_count]"
+					VISITED_PFX_SRC["$PREFIX, ${ROUTE_SRC[$i]}"]=1
+					fi
+				 fi
+			 done
+		    fi
+	    done
             fi
         fi
     done <<< "$MEMBERS"
@@ -382,7 +463,7 @@ process_as_sets() {
         fi
 
         if [ -n "${VISITED_AS_SETS[$MEMBER_ASS]}" ]; then
-            echo "ERROR: Circular reference detected for AS-SET: $MEMBER_ASS"
+            echo "ERROR: Circular reference detected for AS-SET: "$MEMBER_ASS""
             continue
         fi
 
