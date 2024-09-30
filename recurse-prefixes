@@ -436,12 +436,12 @@ process_as_sets() {
 				if [ -z "${VISITED_PFX_SRC[$KVP]}" ]; then
 					if [ "$i" -eq 0 ]; then
 				 	# Output for the first source
-					echo "First source KVP: ["$KVP"]"
+					#echo "First source KVP: ["$KVP"]"
 					 ((irr_prefix_count++))  # Increment the prefix counter
 					 echo -e "${current_as_set_chain} $MEMBER PREFIX: $PREFIX ## route: -> source: [${ROUTE_SRC[0]}] [$irr_prefix_count]"
 					VISITED_PFX_SRC["$PREFIX, ${ROUTE_SRC[$i]}"]=1
 				 else
-					 echo "Second source KVP: ["$KVP"]"
+					 #echo "Second source KVP: ["$KVP"]"
 					 echo -e "${current_as_set_chain} $MEMBER PREFIX: $PREFIX ## route: -> source: [${ROUTE_SRC[$i]}] <---- WARNING: duplicate! [$irr_prefix_count]"
 					VISITED_PFX_SRC["$PREFIX, ${ROUTE_SRC[$i]}"]=1
 					fi
