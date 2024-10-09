@@ -12,8 +12,6 @@
 ## IRR Explorer	(DashCare BV [https://www.dashcare.nl] + Stichting NLNOG [https://www.nlnog.net])
 ##  [https://irrexplorer.nlnog.net]
 ##  [https://github.com/nlnog/irrexplorer]
-## BGPQ4 (Alexandre Snarskii <snar@snar.spb.ru>)
-##  [https://github.com/bgp/bgpq4]
 
 # Usage function to display help message
 usage() {
@@ -134,15 +132,15 @@ else
     fi
 fi
 
-BGPQ4=$(command -v bgpq4)
+UNIQ=$(command -v uniq)
 if [ "$DEBUG" = "1" ]; then
-    echo "DEBUG: checking command -v bgpq4"
+    echo "DEBUG: checking command -v uniq"
 fi
-if [ -z "$BGPQ4" ]; then
-    echo "ERROR: no command found for bgpq4. Please check your path" && exit 1
+if [ -z "$UNIQ" ]; then
+    echo "ERROR: no command found for uniq. Please check your path" && exit 1
 else
     if [ "$DEBUG" = "1" ]; then
-        echo "DEBUG: bgpq4 found: [$BGPQ4]"
+        echo "DEBUG: uniq found: [$UNIQ]"
     fi
 fi
 
@@ -314,6 +312,7 @@ process_as_sets() {
 		    echo "DEBUG: <process_as_sets()> "$WHOIS" -h "$IRR" -s "$REG" "$AS_SET""
 	    fi
             ASS_EXIST=$("$WHOIS" -h "$IRR" -s "$REG" "$AS_SET")
+	    ASS_EXISTS_COUNT=0
 	    if [ "$DEBUG" = "1" ]; then
 		    echo "DEBUG: <process_as_sets()> whois output for REG: ["$REG"] ASS_EXIST: ["$ASS_EXIST"]"
 	    fi
@@ -412,7 +411,10 @@ process_as_sets() {
                     if [ "$DEBUG" = "1" ]; then
                         echo "DEBUG: No prefix origins found for aut-num: ["$MEMBER"] in ["$SOURCE"]"
                     fi
-		    echo -e "${current_as_set_chain} $MEMBER <--- WARNING: aut-num has no route objects with attribute [origin: "$MEMBER"] in source: ["$SOURCE"]"
+		    #echo -e "IRR: ${current_as_set_chain} $MEMBER WARNING: aut-num no origin:"
+		    printf "IRR: %-70s %-10s %-18s %-8s WARNING: "$MEMBER" no origins!\n" \
+                                                "$current_as_set_chain" "$MEMBER" "" "" 
+
                     continue
                 fi
 
@@ -420,7 +422,7 @@ process_as_sets() {
                 for PREFIX in "${PREFIXES[@]}"; do
                     if [ -n "$current_as_set_chain" ] && [ -n "$MEMBER" ] && [ -n "$PREFIX" ]; then
 			if [ "$DEBUG" = "1" ]; then
-				echo "DEBUG: PREFIXES array: ["${PREFIXES[@]}"]"
+				echo "DEBUG: PREFIXES array (after uniq): ["${PREFIXES[@]}"]"
 				echo "DEBUG: output loop - PREFIX: ["$PREFIX"] in MEMBER: [$MEMBER], increment counter"
 				echo "DEBUG: determine the sources for route object for [$PREFIX]"
 			fi
@@ -439,9 +441,7 @@ process_as_sets() {
 				if [ "$DEBUG" = "1" ]; then
 					echo "DEBUG: begin for i loop"
 					echo "DEBUG: in for loop PREFIX: ["$PREFIX"] and KVP: ["$KVP"]"
-					echo "DEBUG: in for loop {VISITED_PFX_SRC[KVP]}: ["${VISITED_PFX_SRC[$KVP]}"]"
 					echo "DEBUG: in for loop {VISITED_PFX_SRC[@]}: ["${VISITED_PFX_SRC[@]}"]"
-					echo "DEBUG: in for loop VISITED_PFX_SRC: ["$VISITED_PFX_SRC"]"
 					echo "DEBUG: in for loop i: ["$i"]"
 					echo "DEBUG: in for loop ROUTE_SRC: ["$ROUTE_SRC"]"
 				fi
@@ -452,7 +452,15 @@ process_as_sets() {
 						echo "DEBUG: First route object + source KVP: ["$KVP"]"
 					fi
 					((irr_prefix_count++))  # Increment the prefix counter
-					echo -e "${current_as_set_chain} $MEMBER route: $PREFIX ## source: [${ROUTE_SRC[0]}] \t[$irr_prefix_count]"
+					#echo -e "IRR: ${current_as_set_chain} $MEMBER route: $PREFIX ## source: [${ROUTE_SRC[0]}] \t[$irr_prefix_count]"
+					printf "IRR: %-70s %-10s %-18s %-8s [%d]\n" \
+						"$current_as_set_chain" "$MEMBER" "$PREFIX" "${ROUTE_SRC[0]}" "$irr_prefix_count"
+
+
+					# Ouput Lumen information if enabled
+					#if [ "$LUMEN" = "1" ]; then
+					#	echo "LUM: blah blah"
+					#fi
 					VISITED_PFX_SRC["$PREFIX, ${ROUTE_SRC[$i]}"]=1
 					if [ "$DEBUG" = "1" ]; then
                                                 echo "DEBUG: end of for i loop for "[$PREFIX]" + ["$ROUTE_SRC"]"
@@ -461,7 +469,13 @@ process_as_sets() {
 					if [ "$DEBUG" = "1" ]; then
 						echo "DEBUG: i not eq 0 else - Duplicate route object + source KVP: ["$KVP"]"
 					fi
-					echo -e "${current_as_set_chain} $MEMBER route: $PREFIX ## source: [${ROUTE_SRC[$i]}] \tWARNING: IRR data error - route: found in multiple registries!"
+					#echo -e "IRR: ${current_as_set_chain} $MEMBER route: $PREFIX ## source: [${ROUTE_SRC[$i]}] \tWARNING: IRR data error - route: found in multiple registries!"
+					printf "IRR: %-70s %-10s %-18s %-8s %s\n" \
+						"$current_as_set_chain" "$MEMBER" "$PREFIX" "${ROUTE_SRC[$i]}" "WARNING: >1 SOURCE!"
+					# Output Lumen information if enabled
+					#if [ "$LUMEN" = "1" ]; then
+					#	echo "LUM: gluk gluk"
+					#fi
 					VISITED_PFX_SRC["$PREFIX, ${ROUTE_SRC[$i]}"]=1
 					if [ "$DEBUG" = "1" ]; then
                                                 echo "DEBUG: end of for i loop for "[$PREFIX]" + ["$ROUTE_SRC"]"
