@@ -252,6 +252,7 @@ esac
 declare -A VISITED_AUT_NUMS
 declare -A VISITED_AS_SETS
 declare -A VISITED_PREFIX
+declare -A VISITED_PFX_SRC
 
 modify_as_chain() {
     local current_chain="$1"
@@ -350,16 +351,18 @@ process_as_sets() {
 	    ASS_EXISTS_COUNT=0
 
     # GetMembers
+    if [ "$DEBUG" = "1" ]; then
+            echo "DEBUG: <process_as_sets()#GetMembers> AS_SET: ["$AS_SET"]"
+    fi
     ## aut-num 
     MEMBERS=$("$WHOIS" -h "$IRR" "$AS_SET" | get_member_autnums)
     if [ "$DEBUG" = "1" ]; then
-    	    echo "DEBUG: process_as_sets()#GetMembers> MEMBERS: ["$MEMBERS"]" 
-	    echo "DEBUG: <process_as_sets()#aut-num> |->aut-num MEMBERS: ["$MEMBERS"]"
+	    echo "DEBUG: <process_as_sets()#aut-num>    |->aut-num MEMBERS: ["$MEMBERS"]"
     fi
     ## as-set
     MEMBERS_ASS=$("$WHOIS" -h "$IRR" "$AS_SET" | get_member_as_sets)
     if [ "$DEBUG" = "1" ]; then
-        echo -e "DEBUG: <process_as_sets()#as-set>> |->as-set MEMBERS_ASS: [$MEMBERS_ASS]\n" | tr '\n' ' ' | sed 's/  /\n/'
+        echo "DEBUG: <process_as_sets()#as-set>     |->as-set MEMBERS_ASS: ["$MEMBERS_ASS"]" 
     fi
 
    if [[ -z "$MEMBERS" && -z "$MEMBERS_ASS" ]]; then
@@ -399,7 +402,7 @@ process_as_sets() {
 		IFS= IRR_OUT=($("$WHOIS" -h "$IRR" "\!g -i origin "$MEMBER"" | grep -e "^route:\|^source:" | awk '/^source:/ && /RPKI/ {skip=1; next} skip && /^route:/ {skip=0} /^route:/ {route=$0} /^source:/ && !skip && route != "" {print route; print $0; route=""}'))
 
 
-		IFS=' ' PREFIXES=($(grep -e "^route:" <<< "$IRR_OUT" | awk '{print $2}' | tr '\n' ' '))
+		IFS=' ' PREFIXES=($(grep -e "^route:" <<< "$IRR_OUT" | awk '{print $2}' | uniq | tr '\n' ' '))
 	
 		if [ "$DEBUG" = "1" ]; then
 			echo "DEBUG: IRR_OUT: ["$IRR_OUT"]"
@@ -414,11 +417,10 @@ process_as_sets() {
                 fi
 
                 # Print only complete chains and valid prefixes
-		declare -A VISITED_PFX_SRC
-
                 for PREFIX in "${PREFIXES[@]}"; do
                     if [ -n "$current_as_set_chain" ] && [ -n "$MEMBER" ] && [ -n "$PREFIX" ]; then
 			if [ "$DEBUG" = "1" ]; then
+				echo "DEBUG: PREFIXES array: ["${PREFIXES[@]}"]"
 				echo "DEBUG: output loop - PREFIX: ["$PREFIX"] in MEMBER: [$MEMBER], increment counter"
 				echo "DEBUG: determine the sources for route object for [$PREFIX]"
 			fi
@@ -427,26 +429,51 @@ process_as_sets() {
 			IFS=' ' read -r -a ROUTE_SRC <<< $(echo -e "$IRR_OUT" | grep -A1 "$PREFIX" | awk '($1 == "source:") {print $2}' | tr '\n' ' ' | sed 's/ $//')
 
 	    		if [ "$DEBUG" = "1" ]; then
-				echo "DEBUG: ROUTE_SRC: [${ROUTE_SRC[*]}]"
+				echo "DEBUG: ROUTE_SRC[@]: [${ROUTE_SRC[@]}]"
+				echo "DEBUG: VISITED_PREFIX: ["$VISITED_PREFIX"]"
 			fi
 
 			# Check if ROUTE_SRC has already been processed
 			for i in "${!ROUTE_SRC[@]}"; do
-				KVP="${PREFIX},${ROUTE_SRC["$i"]}"
+				KVP="${PREFIX} ${ROUTE_SRC["$i"]}"
+				if [ "$DEBUG" = "1" ]; then
+					echo "DEBUG: begin for i loop"
+					echo "DEBUG: in for loop PREFIX: ["$PREFIX"] and KVP: ["$KVP"]"
+					echo "DEBUG: in for loop {VISITED_PFX_SRC[KVP]}: ["${VISITED_PFX_SRC[$KVP]}"]"
+					echo "DEBUG: in for loop {VISITED_PFX_SRC[@]}: ["${VISITED_PFX_SRC[@]}"]"
+					echo "DEBUG: in for loop VISITED_PFX_SRC: ["$VISITED_PFX_SRC"]"
+					echo "DEBUG: in for loop i: ["$i"]"
+					echo "DEBUG: in for loop ROUTE_SRC: ["$ROUTE_SRC"]"
+				fi
 				if [ -z "${VISITED_PFX_SRC[$KVP]}" ]; then
 					if [ "$i" -eq 0 ]; then
 				 	# Output for the first source
-					#echo "First source KVP: ["$KVP"]"
-					 ((irr_prefix_count++))  # Increment the prefix counter
-					 echo -e "${current_as_set_chain} $MEMBER PREFIX: $PREFIX ## route: -> source: [${ROUTE_SRC[0]}] [$irr_prefix_count]"
-					VISITED_PFX_SRC["$PREFIX, ${ROUTE_SRC[$i]}"]=1
-				 else
-					 #echo "Second source KVP: ["$KVP"]"
-					 echo -e "${current_as_set_chain} $MEMBER PREFIX: $PREFIX ## route: -> source: [${ROUTE_SRC[$i]}] <---- WARNING: duplicate! [$irr_prefix_count]"
-					VISITED_PFX_SRC["$PREFIX, ${ROUTE_SRC[$i]}"]=1
+					if [ "$DEBUG" = "1" ]; then
+						echo "DEBUG: First route object + source KVP: ["$KVP"]"
 					fi
+					((irr_prefix_count++))  # Increment the prefix counter
+					echo -e "${current_as_set_chain} $MEMBER route: $PREFIX ## source: [${ROUTE_SRC[0]}] \t[$irr_prefix_count]"
+					VISITED_PFX_SRC["$PREFIX, ${ROUTE_SRC[$i]}"]=1
+					if [ "$DEBUG" = "1" ]; then
+                                                echo "DEBUG: end of for i loop for "[$PREFIX]" + ["$ROUTE_SRC"]"
+					fi
+				 else
+					if [ "$DEBUG" = "1" ]; then
+						echo "DEBUG: i not eq 0 else - Duplicate route object + source KVP: ["$KVP"]"
+					fi
+					echo -e "${current_as_set_chain} $MEMBER route: $PREFIX ## source: [${ROUTE_SRC[$i]}] \tWARNING: IRR data error - route: found in multiple registries!"
+					VISITED_PFX_SRC["$PREFIX, ${ROUTE_SRC[$i]}"]=1
+					if [ "$DEBUG" = "1" ]; then
+                                                echo "DEBUG: end of for i loop for "[$PREFIX]" + ["$ROUTE_SRC"]"
+                                        fi
+					fi
+
+
 				 fi
 			 done
+			 if [ "$DEBUG" = "1" ]; then
+				 echo "DEBUG: for i in ROUTE_SRC loop ended"
+			 fi
 		    fi
 	    done
             fi
