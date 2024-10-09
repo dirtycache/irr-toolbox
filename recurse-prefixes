@@ -471,7 +471,7 @@ process_as_sets() {
 					fi
 					#echo -e "IRR: ${current_as_set_chain} $MEMBER route: $PREFIX ## source: [${ROUTE_SRC[$i]}] \tWARNING: IRR data error - route: found in multiple registries!"
 					printf "IRR: %-70s %-10s %-18s %-8s %s\n" \
-						"$current_as_set_chain" "$MEMBER" "$PREFIX" "${ROUTE_SRC[$i]}" "WARNING: >1 SOURCE!"
+						"$current_as_set_chain" "$MEMBER" "$PREFIX" "${ROUTE_SRC[$i]}" "WARNING: multiple objects!"
 					# Output Lumen information if enabled
 					#if [ "$LUMEN" = "1" ]; then
 					#	echo "LUM: gluk gluk"
