@@ -13,6 +13,8 @@
 ##  [https://irrexplorer.nlnog.net]
 ##  [https://github.com/nlnog/irrexplorer]
 
+START_TIME=$(date +%s.%N)
+
 # Usage function to display help message
 usage() {
     echo " "
@@ -365,7 +367,9 @@ process_as_sets() {
     fi
 
    if [[ -z "$MEMBERS" && -z "$MEMBERS_ASS" ]]; then
-        echo "ERROR: AS-SET [$AS_SET] either contains no members or was not found in any IRR source!"
+        #echo "ERROR: AS-SET [$AS_SET] either contains no members or was not found in any IRR source!"
+	printf "\033[37m\033[41m%-18s %-70s %-10s %-12s %s\033[1;37m\033[41mWARNING: AS-SET object not found or no members!\033[0m\n" \
+		 "" "$current_as_set_chain" "$MEMBER" "$ROUTE_SRC" ""
 	# bail out of this iternation of process_as_sets()
         return
     fi
@@ -411,9 +415,8 @@ process_as_sets() {
                     if [ "$DEBUG" = "1" ]; then
                         echo "DEBUG: No prefix origins found for aut-num: ["$MEMBER"] in ["$SOURCE"]"
                     fi
-		    #echo -e "IRR: ${current_as_set_chain} $MEMBER WARNING: aut-num no origin:"
-		    printf "IRR: %-70s %-10s %-18s %-8s WARNING: "$MEMBER" no origins!\n" \
-                                                "$current_as_set_chain" "$MEMBER" "" "" 
+		    printf "\033[37m\033[41m%-18s %-70s %-10s %-12s %s\033[1;37m\033[41mWARNING: aut-num claims no origins!\033[0m\n" \
+                                                "" "$current_as_set_chain" "$MEMBER" "$ROUTE_SRC" "" 
 
                     continue
                 fi
@@ -452,11 +455,8 @@ process_as_sets() {
 						echo "DEBUG: First route object + source KVP: ["$KVP"]"
 					fi
 					((irr_prefix_count++))  # Increment the prefix counter
-					#echo -e "IRR: ${current_as_set_chain} $MEMBER route: $PREFIX ## source: [${ROUTE_SRC[0]}] \t[$irr_prefix_count]"
-					printf "IRR: %-70s %-10s %-18s %-8s [%d]\n" \
-						"$current_as_set_chain" "$MEMBER" "$PREFIX" "${ROUTE_SRC[0]}" "$irr_prefix_count"
-
-
+					printf "%-18s %-70s %-10s %-12s [%d]\n" \
+						"$PREFIX" "$current_as_set_chain" "$MEMBER" "${ROUTE_SRC[0]}" "$irr_prefix_count"
 					# Ouput Lumen information if enabled
 					#if [ "$LUMEN" = "1" ]; then
 					#	echo "LUM: blah blah"
@@ -469,9 +469,8 @@ process_as_sets() {
 					if [ "$DEBUG" = "1" ]; then
 						echo "DEBUG: i not eq 0 else - Duplicate route object + source KVP: ["$KVP"]"
 					fi
-					#echo -e "IRR: ${current_as_set_chain} $MEMBER route: $PREFIX ## source: [${ROUTE_SRC[$i]}] \tWARNING: IRR data error - route: found in multiple registries!"
-					printf "IRR: %-70s %-10s %-18s %-8s %s\n" \
-						"$current_as_set_chain" "$MEMBER" "$PREFIX" "${ROUTE_SRC[$i]}" "WARNING: multiple objects!"
+					printf "\033[33m\033[40m%-18s %-70s %-10s %-12s %s\033[0m\n" \
+						"$PREFIX" "$current_as_set_chain" "$MEMBER" "${ROUTE_SRC[$i]}" "WARNING: duplicate routes!"
 					# Output Lumen information if enabled
 					#if [ "$LUMEN" = "1" ]; then
 					#	echo "LUM: gluk gluk"
@@ -504,9 +503,13 @@ process_as_sets() {
         fi
 
         if [ -n "${VISITED_AS_SETS[$MEMBER_ASS]}" ]; then
-            echo "ERROR: Circular reference detected for AS-SET: "$MEMBER_ASS""
-            continue
-        fi
+		printf "\033[37m\033[44m%-18s %-70s %-10s %-12s \033[1;37m%sWARNING: AS-SET recursion loop!\033[0m\n" \
+			"" "$current_as_set_chain" "$MEMBER" "$ROUTE_SRC" ""
+		continue
+	fi
+        #    echo "ERROR: Circular reference detected for AS-SET: "$MEMBER_ASS""
+        #    continue
+        #fi
 
         VISITED_AS_SETS["$MEMBER_ASS"]=1
 
@@ -533,3 +536,7 @@ if [ "$DEBUG" = "1" ]; then
 	echo "DEBUG: end of iteration for processing initial as-set and aut-nums from AS_SET"
 fi
 echo "Total prefix count (IRR): $irr_prefix_count"
+
+END_TIME=$(date +%s.%N)
+EXEC_TIME=$(echo "$END_TIME - $START_TIME" | bc)
+printf "Script execution time: [%.2f secs]\n" "$EXEC_TIME"
