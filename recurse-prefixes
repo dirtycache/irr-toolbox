@@ -353,25 +353,24 @@ process_as_sets() {
 
     # GetMembers
     if [ "$DEBUG" = "1" ]; then
-            echo "DEBUG: <process_as_sets()#GetMembers> AS_SET: ["$AS_SET"]"
+	    echo "DEBUG: <process_as_sets()#GetMembers> AS_SET: ["$AS_SET"]"
     fi
     ## aut-num 
     MEMBERS=$("$WHOIS" -h "$IRR" "$AS_SET" | get_member_autnums)
     if [ "$DEBUG" = "1" ]; then
-	    echo "DEBUG: <process_as_sets()#aut-num>    |->aut-num MEMBERS: ["$MEMBERS"]"
+	    echo "DEBUG: <process_as_sets()#aut-num>    |->aut-num MEMBERS: [$(echo "$MEMBERS" | tr '\n' ' ')]" 
     fi
     ## as-set
     MEMBERS_ASS=$("$WHOIS" -h "$IRR" "$AS_SET" | get_member_as_sets)
     if [ "$DEBUG" = "1" ]; then
-        echo "DEBUG: <process_as_sets()#as-set>     |->as-set MEMBERS_ASS: ["$MEMBERS_ASS"]" 
+        echo "DEBUG: <process_as_sets()#as-set>     |->as-set MEMBERS_ASS: [$(echo "$MEMBERS_ASS" | tr '\n' ' ')]"
     fi
 
    if [[ -z "$MEMBERS" && -z "$MEMBERS_ASS" ]]; then
-        #echo "ERROR: AS-SET [$AS_SET] either contains no members or was not found in any IRR source!"
 	printf "\033[37m\033[41m%-18s %-70s %-10s %-12s %s\033[1;37m\033[41mWARNING: AS-SET object not found or no members!\033[0m\n" \
 		 "" "$current_as_set_chain" "$MEMBER" "$ROUTE_SRC" ""
 	# bail out of this iternation of process_as_sets()
-        return
+	return
     fi
 
     current_as_set_chain="${AS_SET_STACK[*]}"
@@ -505,7 +504,8 @@ process_as_sets() {
         if [ -n "${VISITED_AS_SETS[$MEMBER_ASS]}" ]; then
 		printf "\033[37m\033[44m%-18s %-70s %-10s %-12s \033[1;37m%sWARNING: AS-SET recursion loop!\033[0m\n" \
 			"" "$current_as_set_chain" "$MEMBER" "$ROUTE_SRC" ""
-		continue
+		#continue
+		return
 	fi
         #    echo "ERROR: Circular reference detected for AS-SET: "$MEMBER_ASS""
         #    continue
