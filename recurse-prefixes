@@ -355,9 +355,10 @@ process_as_sets() {
 	    done
 	    printf_red_warn "WARNING: | There is no guarantee each AS-SET object contains the same data and expands to same routes!"
 	    printf_red_warn "WARNING: | Unexpected behaviour may occur depending on order of IRR evaluation when building filters!"
-	    if [ -n "$MY_MNT" ] ; then
+	    if [ -z "$MY_MNT" ] ; then
 		    if [ "$DEBUG" = "1" ]; then
 			    echo "DEBUG: MY_MNT not set - attempting to parse"
+		    fi
 		    AUT_IN_ASS=$(echo "$AS_SET" | cut -d':' -f1) 
 		    for mntby in "${ASS_MNT_ARRAY[@]}";  do 
 			    if [ "$DEBUG" = "1" ]; then
@@ -383,7 +384,7 @@ process_as_sets() {
 	    fi
 	    printf "\n"
     elif [ "$ASS_EXISTS_COUNT" -eq 1 ]; then	# as things should be - only one as-set object seen
-	    printf_yellow_advise "as-set: ["$AS-SET"] mnt-by: ["${ASS_MNT_ARRAY[0]}"] source: ["${ASS_SRC_ARRAY[0]}"]"
+	    printf_yellow_advise "as-set: ["$AS_SET"] mnt-by: ["${ASS_MNT_ARRAY[0]}"] source: ["${ASS_SRC_ARRAY[0]}"]"
     fi
 
     # reset the trip odometer on ASS_EXISTS_COUNT 
@@ -457,6 +458,14 @@ process_as_sets() {
 	    for m in "${!AUT_MNT_ARRAY[@]}"; do
 			printf_red_warn "WARNING: |   [aut-num: "$MEMBER"] object [mnt-by: "${AUT_MNT_ARRAY[$m]}"] [source: "${AUT_MNT_SRC_ARRAY[$m]}"]"
             done
+	    if [ -n "$MY_MNT" ]; then
+		    printf_yellow_advise "INFO: Authoritative maintainer already set for this run: "$MY_MNT""
+	    else
+		    printf_yellow_advise "INFO: Authoritative maintainer not set and could not be determined by matching"
+		    printf_yellow_advise "INFO: AS number in as-set name against the value of any parsed mnt-by: attribute"
+		    printf_yellow_advise "INFO: Please invoke this script with -m|--mnt <your mnt-by value> to set it manually"
+		    exit 1
+	    fi
 	    printf "\n"
     fi
 
@@ -517,6 +526,13 @@ process_as_sets() {
 			AUT_MNT=$(echo "${AUT_MNT_ARRAY[0]}" | awk '{$1=$1};1')
 			# Parse origins from ROUTE_IRR_OUT
 			IFS=' '  read -r -a ROUTE_ORIGIN <<< $(echo -e "$ROUTE_IRR_OUT" | awk 'BEGIN {IGNORECASE=1} /^origin:/ {print $2}' | tr '\n' ' ') 
+			# Parse OriginAS: from RIR whois
+			ARIN_ORIGIN=$(whois -h whois.arin.net "r = $PREFIX" | grep "^OriginAS:" | awk '{print $2}')
+			## TODO: would be great to query other RIRs too but I don't yet know how to get this data from RIPE
+			RIR_ORIGIN="$ARIN_ORIGIN"
+			if [ "$DEBUG" = "1" ]; then
+				echo "DEBUG: Found $PREFIX OriginAS: from whois.arin.net - RIR_ORIGIN: ["$RIR_ORIGIN"]"
+			fi
 			# Parse maintainers from ROUTE_IRR_OUT
 			IFS=' ' read -r -a ROUTE_MNT <<< $(echo -e "$ROUTE_IRR_OUT" | awk 'BEGIN {IGNORECASE=1} /^mnt-by:/ {print $2}' | tr '\n' ' ')
 			# Parse sources from ROUTE_IRR_OUT
@@ -553,7 +569,6 @@ process_as_sets() {
 					for o in "${!ROUTE_ORIGIN[@]}"; do	# begin for o
 						KVP="${PREFIX} ${ROUTE_SRC[$o]} ${ROUTE_MNT[$o]}"
 						if [ "$DEBUG" = "1" ]; then
-							echo "------"
 							echo "DEBUG: for o loop iteration start"
 							echo "DEBUG: Parsing route object KVP: ["$KVP"]"
 							echo "DEBUG: ROUTE_ORIGIN[o]: [${ROUTE_ORIGIN[$o]}]"
@@ -568,15 +583,29 @@ process_as_sets() {
 							fi
 							continue
                                                 fi
-						# Output for the first source
-						if [ "${ROUTE_ORIGIN[$o]}" = "$MEMBER" ] && [ "${ROUTE_MNT[$o]}" == "$MY_MNT" ]; then	# valid data match
+						# OUTPUT
+						## if we can get origin AS info from RIR
+						if [ -n "$RIR_ORIGIN" ]; then
+							if [ "$RIR_ORIGIN" != "$MEMBER" ]; then
+								echo "----"
+								printf_red_warn "prefix: $PREFIX , RIR OriginAS: $RIR_ORIGIN"
+								printf_red_warn "WARNING: | $PREFIX enumerated via origin: $MEMBER (from $AS_SET member: $MEMBER) mismatches OriginAS: "$RIR_ORIGIN" from RIR!"
+								printf_red_warn "WARNING: | Consider fixing or deleting your object [route: $PREFIX] within IRR"
+								break 2
+							fi
+						else
+							echo "----"
+							echo "prefix: $PREFIX , RIR OriginAS: ["$RIR_ORIGIN"]"
+						fi
+
+						if [ "${ROUTE_ORIGIN[$o]}" == "$MEMBER" ] &&  [ "${ROUTE_MNT[$o]}" == "$MY_MNT" ]; then	# valid data match
 							((irr_prefix_count++))  # Increment the prefix counter
 							## OUTPUT 
 							if [ "$DEBUG" = "1" ]; then
 								echo "DEBUG: OUTPUT if first clause match ROUTE_ORIGIN[o] = MEMBER && ROUTE_MNT[o] = AUTNUM_MNT"
 							fi
 							printf "%-18s %-70s %-10s %-12s [%d] [%s]\n" \
-								 "$PREFIX" "$current_as_set_chain" "$MEMBER" "${ROUTE_SRC[0]}" "$irr_prefix_count" "${ROUTE_MNT[$o]}"
+								 "$PREFIX" "$current_as_set_chain" "$MEMBER" "${ROUTE_SRC[0]}" "$irr_prefix_count" "${ROUTE_MNT[$o]}" 
 							if [ "$DEBUG" = "1" ]; then
 								echo "DEBUG: setting VISITED_PFX_SRC[KVP] =1 for ["$KVP"]"
 							fi
@@ -584,13 +613,16 @@ process_as_sets() {
 							if [ "$DEBUG" = "1" ]; then
 								echo "DEBUG: for o loop iteration end"
 							fi
-						elif [ "${ROUTE_ORIGIN[$o]}" == "$MEMBER" ] && [ "${ROUTE_MNT[$o]}" != "$MY_MNT" ]; then	# mnt mismatch
+						elif [ "${ROUTE_ORIGIN[$o]}" == "$MEMBER" ] && [ "${ROUTE_MNT[$o]}" != "$AUT_MNT" ]; then	# mnt mismatch but will work
+							 ((irr_prefix_count++))  # Increment the prefix counter
 							## OUTPUT
 							if [ "$DEBUG" = "1" ]; then
                                                                 echo "DEBUG: OUTPUT elif clause match ROUTE_ORIGIN[o] == MEMBER && ROUTE_MNT[o] != MY_MNT"
                                                         fi
+							printf "%-18s %-70s %-10s %-12s [%d] [%s]\n" \
+                                                                 "$PREFIX" "$current_as_set_chain" "$MEMBER" "${ROUTE_SRC[0]}" "$irr_prefix_count" "${ROUTE_MNT[$o]}"
 							printf "\033[33m\033[40m%-18s %-70s %-10s %-12s %s\033[0m\n" \
-                                                        "$PREFIX" "$current_as_set_chain" "${ROUTE_ORIGIN[$o]}" "${ROUTE_SRC[$o]}" "WARNING: origin mismatch! ["${ROUTE_MNT[$o]}"]"
+                                                        "$PREFIX" "^^^" "^^^" "^^^" "^^^ mnt-by for object is not "$MY_MNT""
                                                         if [ "$DEBUG" = "1" ]; then
                                                                 echo "DEBUG: setting VISITED_PFX_SRC[KVP] =1 for ["$KVP"]"
                                                         fi
@@ -601,7 +633,7 @@ process_as_sets() {
                                                                 echo "DEBUG: OUTPUT elif clause match ROUTE_ORIGIN[o] != MEMBER"
                                                         fi
                                                         printf "\033[33m\033[40m%-18s %-70s %-10s %-12s %s\033[0m\n" \
-                                                        "$PREFIX" "$current_as_set_chain" "${ROUTE_ORIGIN[$o]}" "${ROUTE_SRC[$o]}" "WARNING: origin mismatch! ["${ROUTE_MNT[$o]}"]"
+                                                        "$PREFIX" "$current_as_set_chain" "${ROUTE_ORIGIN[$o]}" "${ROUTE_SRC[$o]}" "origin mismatch! ["${ROUTE_MNT[$o]}"]"
 							if [ "$DEBUG" = "1" ]; then
                                                                 echo "DEBUG: setting VISITED_PFX_SRC[KVP] =1 for ["$KVP"]"
                                                         fi
@@ -612,7 +644,7 @@ process_as_sets() {
                                                                 echo "DEBUG: OUTPUT elif clause match ROUTE_SRC[@] gt 1"
                                                         fi
 							printf "\033[33m\033[40m%-18s %-70s %-10s %-12s %s\033[0m\n" \
-								"$PREFIX" "$current_as_set_chain" "$MEMBER" "${ROUTE_SRC["$o"]}" "WARNING: same route: seen multiple IRRs! ["${ROUTE_MNT[$o]}"]"
+								"$PREFIX" "$current_as_set_chain" "$MEMBER" "${ROUTE_SRC["$o"]}" "same route: seen multiple IRRs! ["${ROUTE_MNT[$o]}"]"
 							if [ "$DEBUG" = "1" ]; then
                                                                 echo "DEBUG: setting VISITED_PFX_SRC[KVP] =1 for ["$KVP"]"
                                                         fi
@@ -632,7 +664,7 @@ process_as_sets() {
 				echo "DEBUG: for i in ROUTE_SRC loop ended"
 			fi
 		    fi
-		    echo "---"
+		    #echo "---"
 		    if [ "$DEBUG" = "1" ]; then
 			    echo "DEBUG: end of for PREFIX loop"
 		    fi
