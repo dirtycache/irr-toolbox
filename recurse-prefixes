@@ -528,8 +528,14 @@ process_as_sets() {
 			IFS=' '  read -r -a ROUTE_ORIGIN <<< $(echo -e "$ROUTE_IRR_OUT" | awk 'BEGIN {IGNORECASE=1} /^origin:/ {print $2}' | tr '\n' ' ') 
 			# Parse OriginAS: from RIR whois
 			ARIN_ORIGIN=$(whois -h whois.arin.net "r = $PREFIX" | grep "^OriginAS:" | awk '{print $2}')
-			## TODO: would be great to query other RIRs too but I don't yet know how to get this data from RIPE
-			RIR_ORIGIN="$ARIN_ORIGIN"
+			## TODO: would be great to query other RIRs too but I don't yet know how to get this data from RIPE et al.
+			##
+			
+			if [ -n "$ARIN_ORIGIN" ]; then
+				RIR_ORIGIN="$ARIN_ORIGIN"
+				RIR="ARIN"
+			fi
+
 			if [ "$DEBUG" = "1" ]; then
 				echo "DEBUG: Found $PREFIX OriginAS: from whois.arin.net - RIR_ORIGIN: ["$RIR_ORIGIN"]"
 			fi
@@ -589,8 +595,10 @@ process_as_sets() {
 							if [ "$RIR_ORIGIN" != "$MEMBER" ]; then
 								echo "----"
 								printf_red_warn "prefix: $PREFIX , RIR OriginAS: $RIR_ORIGIN"
-								printf_red_warn "WARNING: | $PREFIX enumerated via origin: $MEMBER (from $AS_SET member: $MEMBER) mismatches OriginAS: "$RIR_ORIGIN" from RIR!"
-								printf_red_warn "WARNING: | Consider fixing or deleting your object [route: $PREFIX] within IRR"
+								printf_red_warn "WARNING: $PREFIX enumerated via origin: $MEMBER"
+								printf_red_warn "WARNING: | (from $AS_SET member: $MEMBER)"
+								printf_red_warn "WARNING: | "$RIR" OriginAS: "$RIR_ORIGIN" mismatch"
+								printf_red_warn "WARNING: | Consider fixing or deleting offending IRR object [route: $PREFIX]"
 								break 2
 							fi
 						else
