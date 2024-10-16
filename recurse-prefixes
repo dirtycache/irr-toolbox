@@ -580,7 +580,7 @@ process_as_sets() {
 							echo "DEBUG: ROUTE_ORIGIN[o]: [${ROUTE_ORIGIN[$o]}]"
 							echo "DEBUG: ROUTE_MNT[o]: [${ROUTE_MNT[$o]}]"
 							echo "DEBUG: ROUTE_SRC[o]: [${ROUTE_SRC[$o]}]"
-							echo "DEBUG: {AUT_MNT_ARRAY[@]: ["${AUT_MNT_ARRAY[@]}"]"
+							echo "DEBUG: AUT_MNT_ARRAY[@]: ["${AUT_MNT_ARRAY[@]}"]"
 							echo "DEBUG: AUT_MNT: ["$AUT_MNT"]"
 						fi
 						if [ "${VISITED_PFX_SRC[$KVP]}" = "1" ]; then
