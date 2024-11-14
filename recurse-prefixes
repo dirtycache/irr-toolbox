@@ -25,9 +25,9 @@ usage() {
     echo "Recurse a given as-set object through member aut-nums and member as-sets which themselves contain."
     echo "aut-nums, until the end-of-recursion aut-num is reached. Query aut-num objects for originated prefixes."
     echo " "
-	echo "Uses ANSI colors by default.  Suggested terminal width is >=100 columns"
+	echo "Uses ANSI colors by default.  Suggested terminal width is >=120 columns"
 	echo " "
-    echo "Usage: $0 <as_set_name|aut-num> [-m|--mnt <mnt-by> -s|--source <irr_source> <as_set_name> [-i|--info --debug -h|--help]"
+    echo "Usage: $0 <as_set_name|aut-num> [-m|--mnt <mnt-by> -s|--source <irr_source> <as_set_name> [-6|--ipv6 -i|--info --debug -h|--help]"
     echo " "
     printf "%-30s %-80s \n" "<as_set_name|aut-num>" "The IRR object you wish to enumerate"
     printf "%-30s %-80s \n" "-m|--mnt <mnt-by>" "The name of your maintainer holding *your* as-set, route, and other IRR objects"
@@ -36,9 +36,12 @@ usage() {
     printf "%-30s %-80s \n" "-s|--source <irr_source>" "Name of IRR to query such as NTTCOM, RADB, ALTDB, LEVEL3"
     printf "%-30s %-80s \n" "" "See https://irr.net/registry for full list of SOURCE options"
     printf "%-30s %-80s \n" "" "Defaults to NTTCOM if not specified"
-    printf "%-30s %-80s \n" "-i|--info"	"Output extra information about the enumerated route objects from the as-set"
+    printf "%-30s %-80s \n" "-6|--ipv6" "IPv6 mode. Defaults to IPv4 when not specified"
+    printf "%-30s %-80s \n" "-i|--info"	"Output verbose extra information about the enumerated route objects from the as-set"
+    printf "%-30s %-80s \n" ""	"Some INFO is displayed by default when relevant to returned IRR data"
     printf "%-30s %-80s \n" "--debug" "Enable script execution debugging - there is a prodigious amount"
     printf "%-30s %-80s \n" "" "of output; use judiciously and don't say we didn't warn you."
+    printf "%-30s %-80s \n" "" "Implicitly sets -i|--info"
     printf "%-30s %-80s \n" "-h|--help" "# Print this help message and exit"
     printf "\n"
     exit 1
@@ -83,17 +86,102 @@ printf_warn() {
 	printf "${red_bg_bold_white}$1${reset}\n"
 }
 
+is_visited_pfx() {
+	# This if conditon checks if we've visisted this prefix yet
+	if [ ${VISITED_PFX["$PREFIX"]} = "false" ]; then
+		if [ "$DEBUG" = "1" ]; then
+			printf_debug "DEBUG: is_visited_pfx() match if VISITED_PFX[PREFIX]=false - is "${VISITED_PFX["$PREFIX"]}""
+			printf_debug "DEBUG: is_visited_pfx() - counter++ now"
+		fi
+		((irr_prefix_count++))  # Increment the prefix counter
+	elif [ ${VISITED_PFX["$PREFIX"]} = "true" ]; then
+		if [ "$DEBUG" = "1" ]; then
+			printf_debug "DEBUG: is_visited_pfx() match elif VISITED_PFX[PREFIX]=true - is "${VISITED_PFX["$PREFIX"]}""
+			printf_debug "DEBUG: is_visited_pfx() match elif - do not increment"
+		fi
+		if [ "$INFO" = "1" ]; then
+			printf_info "+INFO: is_visited_pfx () Already encountered $PREFIX - not incrementing unique prefix count"	
+		fi
+	fi
+	if [ ${VISITED_PFX["$PREFIX"]} != "true" ]; then
+		if [ "$DEBUG" = "1" ]; then
+			printf_debug "DEBUG: is_visited_pfx() - VISITED_PFX[PREFIX] != true so now setting VISITED_PFX[PREFIX] to true for $PREFIX"
+		fi
+		VISITED_PFX["$PREFIX"]=true
+	fi
+	if [ "$DEBUG" = "1" ]; then
+		printf_debug "DEBUG: is_visited_pfx() VISITED_PFX[PREFIX] "${VISITED_PFX["$PREFIX"]}""
+		printf_debug "DEBUG: is_visited_pfx() irr_prefix_count: "$irr_prefix_count""
+	fi
+}
+
+
+info_output() {
+	if [ "$INFO" = "1" ]; then
+        printf_info "+INFO: route: $PREFIX mnt-by: ${ROUTE_MNT[$o]} [${ROUTE_SRC[$o]}] = $MEMBER mnt-by: $AUT_MNT [$AUT_MNT_SRC]"
+        printf_info "+INFO: IRR chain: $current_as_set_chain origin: $MEMBER"
+        printf_info "+INFO: aut_num mnt-by: $AUT_MNT"
+        printf_info "+INFO: Cumulative unique prefix count: $irr_prefix_count"
+	fi
+
+	if [ "$PFX_MATCH" = "c0" ]; then 
+        # CHANGE TO DEBUG
+        if [ "$INFO" = "1" ]; then
+            printf_debug "DEBUG: c0 match - ROUTE_ORIGIN[o] == MEMBER and ROUTE_MNT[o] == AUT_MNT"
+        fi
+        if [ "$INFO" = "1" ]; then
+        	printf_info "+INFO: This route object has same mnt-by as origin AS - ${uline}best candidate IRR data!"
+		fi
+
+	elif [ "$PFX_MATCH" = "c1" ]; then
+        # CHANGE TO DEBUG
+        if [ "$INFO" = "1" ]; then
+            printf_debug "DEBUG: c1 match - ROUTE_ORIGIN[o] = MEMBER and ROUTE_MNT != AUT_MNT"
+        fi
+        printf_info_bold "+INFO: route: "$PREFIX" mnt-by: "${ROUTE_MNT[$o]}" ["${ROUTE_SRC[$o]}"] != "$MEMBER" mnt-by: "$AUT_MNT" ["$AUT_MNT_SRC"]"
+        printf_info_bold "+INFO: route: is either proxy registered or bogus data."
+
+	elif [ "$PFX_MATCH" = "c2" ]; then
+		# CHANGE TO DEBUG
+        if [ "$INFO" = "1" ]; then
+			printf_debug "DEBUG: c2 match - ROUTE_ORIGIN[o] != MEMBER"
+		fi
+
+	elif [ "$PFX_MATCH" = "c3" ]; then
+		# CHANGE TO DEBUG
+        if [ "$INFO" = "1" ]; then
+            printf_debug "DEBUG: c3 match - route with identical attributes seen in >1 registry"
+		fi
+        printf_warning "+WARNING: This route object exists identically in multi reg. - ${uline}best candidate IRR data, consider deleting redundant data"
+	fi
+
+	if [ "$DEBUG" = "1" ]; then
+        printf_debug "DEBUG: "$PFX_MATCH" setting VISITED_PFX_SRC[KVP] =1 for ["$KVP"]"
+	fi
+	VISITED_PFX_SRC[$KVP]=1
+	if [ "$DEBUG" = "1" ]; then
+        printf_debug "DEBUG: "$PFX_MATCH" for o loop iteration end"
+        printf_debug "DEBUG: unset PFX_MATCH (was: "$PFX_MATCH")"
+	fi                                                      
+	unset PFX_MATCH
+}
+
 ## defaults for input variables
 SOURCE="NTTCOM"
 AS_SET="$1"
-INFO=0
 DEBUG=0
+if [ "$DEBUG" = "1" ]; then
+	INFO=1
+else
+	INFO=0
+fi
 
 # Parse the command line options
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         -m|--mnt) MY_MNT="$2"; shift 2;;
         -s|--source) SOURCE="$2"; shift 2;;
+        -6|--ipv6) IPV6="1"; shift 1;;
         -i|--info) INFO=1; shift 1;;
         --debug) DEBUG=1; shift 1;;
         -h|--help) usage;;
@@ -107,6 +195,14 @@ done
 if [[ -z "$AS_SET" ]]; then
 	echo "Error: <as_set_name> is required!"
     	usage
+fi
+
+# FOAD if IPv6 mode is invoked
+if [ "$IPV6" = "1" ]; then
+	printf "Sorry, IPv6 support isn't implemented yet.\n"
+	printf "Please hang up and try your call again later.\n"
+	printf "This is a recording.\n"
+	exit 1
 fi
 
 # Initialize variables
@@ -294,6 +390,7 @@ esac
 declare -A VISITED_AUT_NUMS
 declare -A VISITED_AS_SETS
 declare -A VISITED_PFX_SRC
+declare -A VISITED_PFX
 
 modify_as_chain() {
     local current_chain="$1"
@@ -466,11 +563,11 @@ process_as_sets() {
 	    fi
     else 
 	    ## OUTPUT
-	    printf_warn "WARNING: as-set $AS_SET"
-	    printf_warn "WARNING: +Too much member!"
-	    printf_warn "WARNING: +member: "$MEMBER" object found in multiple registry sources:" 
+	    printf_warn "+WARNING: as-set $AS_SET"
+	    printf_warn "+WARNING: Too much member!"
+	    printf_warn "+WARNING: member: "$MEMBER" object found in multiple sources:" 
 	    for m in "${!AUT_MNT_ARRAY[@]}"; do
-			printf_warn "WARNING: ++[aut-num: "$MEMBER"] object [mnt-by: "${AUT_MNT_ARRAY[$m]}"] [source: "${AUT_MNT_SRC_ARRAY[$m]}"]"
+			printf_warn "+WARNING: ++[aut-num: "$MEMBER"] object [mnt-by: "${AUT_MNT_ARRAY[$m]}"] [source: "${AUT_MNT_SRC_ARRAY[$m]}"]"
             done
 	    printf "${reset}"
     fi
@@ -517,10 +614,14 @@ process_as_sets() {
 
             for PREFIX in "${PREFIXES[@]}"; do	# begin for PREFIX
                 if [ -"$current_as_set_chain" ] && [ -n "$MEMBER" ] && [ -n "$PREFIX" ]; then
+						if [ -z "${VISITED_PFX["$PREFIX"]}"]; then
+							VISITED_PFX["$PREFIX"]=false
+						fi
 					if [ "$DEBUG" = "1" ]; then
 						printf_debug "DEBUG: top of for PREFIX loop"
-						printf_debug "DEBUG: PREFIXES array (after uniq): ["${PREFIXES[@]}"]"
-						printf_debug "DEBUG: output loop - PREFIX: ["$PREFIX"] origin: ["$MEMBER"], increment counter"
+						printf_debug "DEBUG: for PREFIX loop PREFIX: $PREFIX"
+						printf_debug "DEBUG: for PREFIX loop VISITED_PFX[PREFIX]: "${VISITED_PFX["$PREFIX"]}""
+						#printf_debug "DEBUG: output loop - PREFIX: ["$PREFIX"] origin: ["$MEMBER"], increment counter"
 						printf_debug "DEBUG: determine the origin, mnt-by, and source for route: ["$PREFIX"]"
 					fi
 				# Collect origin, mnt-by, and source for the current prefix route: and store it
@@ -559,7 +660,7 @@ process_as_sets() {
 				KVP="${PREFIX} ${ROUTE_SRC["$i"]} ${ROUTE_MNT["$i"]}"
 				if [ -z "${VISITED_PFX_SRC[$KVP]}" ]; then	# set to integer 0 if length0/not exist
 					if [ "$DEBUG" = "1" ]; then
-						printf_debug "DEBUG: VISITED_PFX_SRC[KVP] matches if -z ; setting to integer 0"
+						printf_debug "DEBUG: for i in ROUTE_SRC - VISITED_PFX_SRC[KVP] matches if -z ; setting to integer 0"
 					fi
 					VISITED_PFX_SRC[$KVP]=0
 				fi
@@ -581,6 +682,7 @@ process_as_sets() {
 						if [ "$DEBUG" = "1" ]; then
 							printf_debug "DEBUG: for o loop iteration start"
 							printf_debug "DEBUG: Parsing route object KVP: ["$KVP"]"
+							printf_debug "DEBUG: in for o loop - VISITED_PFX[PREFIX]: ${VISITED_PFX["$PREFIX"]}"
 							printf_debug "DEBUG: ROUTE_ORIGIN[o]: [${ROUTE_ORIGIN[$o]}]"
 							printf_debug "DEBUG: ROUTE_MNT[o]: [${ROUTE_MNT[$o]}]"
 							printf_debug "DEBUG: ROUTE_SRC[o]: [${ROUTE_SRC[$o]}]"
@@ -603,7 +705,7 @@ process_as_sets() {
 						fi
 						if [ -z "$RIR_ORIGIN" ]; then
 							if [ "$INFO" = "1" ]; then
-								printf_info "INFO: RIR OriginAS: [notfound]"
+								printf_info "+INFO: RIR OriginAS: [notfound]"
 							fi
 							elif [ "$ROUTE_MNT" = "$AUT_MNT" ]; then 
 							if [ "$INFO" = "1" ]; then
@@ -622,82 +724,86 @@ process_as_sets() {
 							printf_info "++ROUTE_MNT: $ROUTE_MNT"
 							printf_info "++AUT_MNT: $AUT_MNT"
 						fi
+						## Tag this prefix (the prefix/route:, not the prefix+src KVP) visited
+						#VISITED_PFX[$PREFIX]=true
+						# Now determine which scenario matches the data parsed
 
-						if [ "${ROUTE_ORIGIN[$o]}" == "$MEMBER" ] &&  [ "${ROUTE_MNT[$o]}" == "$AUT_MNT" ]; then	# valid data match - clause 0
-							((irr_prefix_count++))  # Increment the prefix counter
-							## OUTPUT 
-							if [ "$DEBUG" = "1" ]; then
-								printf_debug "DEBUG: OUTPUT if clause 0 - match ROUTE_ORIGIN[o] = MEMBER && ROUTE_MNT[o] = AUTNUM_MNT"
-							fi
-							if [ "$INFO" = "1" ]; then
-								printf_info_bold "clause 0 match"
-								printf_info "INFO: route: $PREFIX"
-								printf_info "INFO: IRR chain: $current_as_set_chain origin: $MEMBER"
-								printf_info "INFO: aut_num mnt-by: $AUT_MNT"
-								printf_info "INFO: route: $PREFIX mnt-by: ${ROUTE_MNT[$o]} [${ROUTE_SRC[$o]}] = $MEMBER mnt-by: $AUT_MNT [$AUT_MNT_SRC]"
-								printf_info "INFO: Cumulative unique prefix count for $AS_SET: $irr_prefix_count"
-							fi
-							if [ "$DEBUG" = "1" ]; then
-								printf_debug "DEBUG: setting VISITED_PFX_SRC[KVP] =1 for ["$KVP"]"
-							fi
-							VISITED_PFX_SRC[$KVP]=1
-							if [ "$DEBUG" = "1" ]; then
-								printf_debug "DEBUG: for o loop iteration end"
-							fi
-						elif [ "${ROUTE_ORIGIN[$o]}" == "$MEMBER" ] && [ "${ROUTE_MNT[$o]}" != "$AUT_MNT" ]; then	# mnt mismatch but will work - clause 1
-							 ((irr_prefix_count++))  # Increment the prefix counter
-							## OUTPUT
-							if [ "$DEBUG" = "1" ]; then
-                                printf_debug "DEBUG: OUTPUT elif clause 1 match ROUTE_ORIGIN[o] == MEMBER && ROUTE_MNT[o] != AUT_MNT"
-                            fi
-							if [ "$INFO" = "1" ]; then
-								printf_info_bold "clause 1 match"
-								printf_info "INFO: IRR chain: $current_as_set_chain origin: $MEMBER"
-								printf_info "INFO: source: ${ROUTE_SRC[$o]}"
-								printf_info "INFO: mnt-by: ${ROUTE_MNT[$o]}"
-								printf_info "INFO: Cumulative unique prefix count for $AS_SET: $irr_prefix_count"
-							fi
-							# Output mismatch info even without --info
-							printf_info_bold "+INFO: route: $PREFIX mnt-by: ${ROUTE_MNT[$o]} [${ROUTE_SRC[$o]}] != $MEMBER mnt-by: $AUT_MNT"
-							printf_info_bold "+INFO: route: is either proxy registered or bogus data."
-                            if [ "$DEBUG" = "1" ]; then
-                                printf_debug "DEBUG: setting VISITED_PFX_SRC[KVP] =1 for ["$KVP"]"
-                            fi
-                            VISITED_PFX_SRC[$KVP]=1
-                        elif [ "${ROUTE_ORIGIN[$o]}" != "$MEMBER" ]; then    # origin/member mismatch - bogus IRR objects - clause 2
-							 ((irr_prefix_count++))  # Increment the prefix counter
-                            ## OUTPUT  
-							if [ "$DEBUG" = "1" ]; then
-                                printf_debug "DEBUG: OUTPUT elif clause 2 match ROUTE_ORIGIN[o] != MEMBER"
-                            fi
-							if [ "$INFO" = "1" ]; then
-								printf_info_bold "clause 2 match"
-								printf_info "INFO: IRR chain: $current_as_set_chain origin: $MEMBER"
-								printf_info "INFO: source: ${ROUTE_SRC[$o]}"
-								printf_info "INFO: mnt-by: ${ROUTE_MNT[$o]}"
-								printf_info_bold "INFO: This route object has same mnt-by as origin AS - ${uline}best candidate IRR data!"
-								printf_info "INFO: Cumulative unique prefix count for $AS_SET: $irr_prefix_count"
-							fi
-							if [ "$DEBUG" = "1" ]; then
-                                printf_debug "DEBUG: setting VISITED_PFX_SRC[KVP] =1 for ["$KVP"]"
-                            fi
-							VISITED_PFX_SRC[$KVP]=1
-						elif [ "${#ROUTE_SRC[@]}" -gt 1 ]; then		# identical route and attributes in multiple registries - clause 3
-							## OUTPUT
-							if [ "$DEBUG" = "1" ]; then
-                                printf_debug "DEBUG: OUTPUT elif clause 3 match ROUTE_SRC[@] gt 1"
-                            fi
-							printf_info_bold "clause 3 match"
-							printf_info "INFO: IRR chain: $current_as_set_chain origin: $MEMBER"
-							printf_info "INFO: source: ${ROUTE_SRC[$o]}"
-							printf_info "INFO: mnt-by: ${ROUTE_MNT[$o]}"
-							printf_info_bold "INFO: This route object has same mnt-by as origin AS - ${uline}best candidate IRR data!"
-							printf_info "INFO: Cumulative unique prefix count for $AS_SET: $irr_prefix_count"
-							if [ "$DEBUG" = "1" ]; then
-                                printf_debug "DEBUG: setting VISITED_PFX_SRC[KVP] =1 for ["$KVP"]"
-                            fi
-							VISITED_PFX_SRC[$KVP]=1
+						if [ "${ROUTE_ORIGIN[$o]}" == "$MEMBER" ] &&  [ "${ROUTE_MNT[$o]}" == "$AUT_MNT" ]; then	# valid data match - case 0
+							PFX_MATCH="c0"
+							## CHANGE TO DEBUG
+							#if [ "$INFO" = "1" ]; then
+							#	printf_debug "DEBUG: c0 VISITED_PFX[PREFIX] "${VISITED_PFX["$PREFIX"]}""
+							#	printf_debug "DEBUG: c0 match - ROUTE_ORIGIN[o] == MEMBER and ROUTE_MNT[o] == AUT_MNT"
+							#	if [ ${VISITED_PFX["$PREFIX"]} = "true" ]; then	
+							#		printf_debug "DEBUG: c0 - match if VISITED_PFX[PREFIX]=true - is "${VISITED_PFX["$PREFIX"]}""
+							#		printf_debug "DEBUG: c0 - match if VISITED_PFX[PREFIX]-true - do not increment"
+							#	fi
+							#fi
+							is_visited_pfx
+							info_output
+
+							#if [ "$DEBUG" = "1" ]; then
+							#	printf_debug "DEBUG: c0 setting VISITED_PFX_SRC[KVP] =1 for ["$KVP"]"
+							#fi
+							#VISITED_PFX_SRC[$KVP]=1
+							#unset PFX_MATCH
+							#if [ "$DEBUG" = "1" ]; then
+							#	printf_debug "DEBUG: c0 for o loop iteration end"
+							#fi
+
+						elif [ "${ROUTE_ORIGIN[$o]}" == "$MEMBER" ] && [ "${ROUTE_MNT[$o]}" != "$AUT_MNT" ]; then	# mnt mismatch but will work - case 1
+							PFX_MATCH="c1"
+							## CHANGE TO DEBUG
+							#if [ "$INFO" = "1" ]; then
+							#	printf_debug "DEBUG: c1 match - ROUTE_ORIGIN[o] = MEMBER and ROUTE_MNT != AUT_MNT"
+							#	#printf_debug "DEBUG: c1 irr_prefix_count: "$irr_prefix_count""
+							#	#printf_debug "DEBUG: c1 initial VISITED_PFX[PREFIX] before if/elif matching: "${VISITED_PFX["$PREFIX"]}""
+							#fi
+							is_visited_pfx
+							info_output
+
+                            #if [ "$DEBUG" = "1" ]; then
+                            #    printf_debug "DEBUG: c1 setting VISITED_PFX_SRC[KVP] =1 for ["$KVP"]"
+                            #fi
+                            #VISITED_PFX_SRC[$KVP]=1
+							#unset PFX_MATCH
+							#if [ "$DEBUG" = "1" ]; then
+							#	printf_debug "DEBUG: c0 for o loop iteration end"
+							#fi
+
+                        elif [ "${ROUTE_ORIGIN[$o]}" != "$MEMBER" ]; then    # origin/member mismatch - bogus IRR objects - case 2
+							PFX_MATCH="c2"
+							# CHANGE TO DEBUG
+							#if [ "$INFO" = "1" ]; then
+                            #    printf_debug "DEBUG: c2 match - ROUTE_ORIGIN[o] != MEMBER"
+                            #fi
+							is_visited_pfx
+							info_output
+
+							#if [ "$DEBUG" = "1" ]; then
+                            #    printf_debug "DEBUG: c2 setting VISITED_PFX_SRC[KVP] =1 for ["$KVP"]"
+                            #fi
+							#VISITED_PFX_SRC[$KVP]=1
+							#unset PFX_MATCH
+
+						elif [ "${#ROUTE_SRC[@]}" -gt 1 ]; then		# identical route and attributes in multiple registries - case 3
+							PFX_MATCH="c3"
+							# CHANGE TO DEBUG
+							#if [ "$INFO" = "1" ]; then
+                            #    printf_debug "DEBUG: c3 match - ROUTE_SRC[@] gt 1"
+                            #fi
+							is_visited_pfx
+							info_output
+							
+							#if [ "$DEBUG" = "1" ]; then
+                            #    printf_debug "DEBUG: setting VISITED_PFX_SRC[KVP] =1 for ["$KVP"]"
+                            #fi
+							#VISITED_PFX_SRC[$KVP]=1
+						else
+							PFX_MATCH="nomatch"
+							printf_debug "no case matched for prefix $PREFIX"
 						fi
+
 						if [ "$DEBUG" = "1" ]; then
 							printf_debug "DEBUG: end of for o iteration"
 						fi
