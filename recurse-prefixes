@@ -466,11 +466,11 @@ process_as_sets() {
 	    fi
     else 
 	    ## OUTPUT
-	    printf_warn "WARNING: Too much member!"
-	    printf_warn "WARNING: Within as-set $AS_SET"
-	    printf_warn "WARNING: member: "$MEMBER" object found in multiple registry sources:" 
+	    printf_warn "WARNING: as-set $AS_SET"
+	    printf_warn "WARNING: +Too much member!"
+	    printf_warn "WARNING: +member: "$MEMBER" object found in multiple registry sources:" 
 	    for m in "${!AUT_MNT_ARRAY[@]}"; do
-			printf_warn "WARNING: |   [aut-num: "$MEMBER"] object [mnt-by: "${AUT_MNT_ARRAY[$m]}"] [source: "${AUT_MNT_SRC_ARRAY[$m]}"]"
+			printf_warn "WARNING: ++[aut-num: "$MEMBER"] object [mnt-by: "${AUT_MNT_ARRAY[$m]}"] [source: "${AUT_MNT_SRC_ARRAY[$m]}"]"
             done
 	    printf "${reset}"
     fi
@@ -595,8 +595,12 @@ process_as_sets() {
 							continue
                         fi
 						# OUTPUT
-						## if we can get origin AS info from RIR
+						if [ "$INFO" = "1" ]; then
+							echo ""
 							echo "$PREFIX"
+						else
+							echo "$PREFIX"
+						fi
 						if [ -z "$RIR_ORIGIN" ]; then
 							if [ "$INFO" = "1" ]; then
 								printf_info "INFO: RIR OriginAS: [notfound]"
@@ -651,10 +655,11 @@ process_as_sets() {
 								printf_info "INFO: IRR chain: $current_as_set_chain origin: $MEMBER"
 								printf_info "INFO: source: ${ROUTE_SRC[$o]}"
 								printf_info "INFO: mnt-by: ${ROUTE_MNT[$o]}"
-								printf_info_bold "INFO: route: $PREFIX mnt-by: ${ROUTE_MNT[$o]} [${ROUTE_SRC[$o]}] != $MEMBER mnt-by: $AUT_MNT [$AUT_MNT_SRC]"
-								printf_info_bold "INFO: route: is either proxy registered or bogus data."
 								printf_info "INFO: Cumulative unique prefix count for $AS_SET: $irr_prefix_count"
 							fi
+							# Output mismatch info even without --info
+							printf_info_bold "+INFO: route: $PREFIX mnt-by: ${ROUTE_MNT[$o]} [${ROUTE_SRC[$o]}] != $MEMBER mnt-by: $AUT_MNT"
+							printf_info_bold "+INFO: route: is either proxy registered or bogus data."
                             if [ "$DEBUG" = "1" ]; then
                                 printf_debug "DEBUG: setting VISITED_PFX_SRC[KVP] =1 for ["$KVP"]"
                             fi
