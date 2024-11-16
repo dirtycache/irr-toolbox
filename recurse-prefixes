@@ -90,28 +90,28 @@ is_visited_pfx() {
 	# This if conditon checks if we've visisted this prefix yet
 	if [ ${VISITED_PFX["$PREFIX"]} = "false" ]; then
 		if [ "$DEBUG" = "1" ]; then
-			printf_debug "DEBUG: is_visited_pfx() match if VISITED_PFX[PREFIX]=false - is "${VISITED_PFX["$PREFIX"]}""
-			printf_debug "DEBUG: is_visited_pfx() - counter++ now"
+			printf_debug "DEBUG: is_visited_pfx() $PREFIX - match if VISITED_PFX[PREFIX]=false - is "${VISITED_PFX["$PREFIX"]}""
+			printf_debug "DEBUG: is_visited_pfx() $PREFIX - counter++ now"
 		fi
 		((irr_prefix_count++))  # Increment the prefix counter
 	elif [ ${VISITED_PFX["$PREFIX"]} = "true" ]; then
 		if [ "$DEBUG" = "1" ]; then
-			printf_debug "DEBUG: is_visited_pfx() match elif VISITED_PFX[PREFIX]=true - is "${VISITED_PFX["$PREFIX"]}""
-			printf_debug "DEBUG: is_visited_pfx() match elif - do not increment"
+			printf_debug "DEBUG: is_visited_pfx() $PREFIX - match elif VISITED_PFX[PREFIX]=true - is "${VISITED_PFX["$PREFIX"]}""
+			printf_debug "DEBUG: is_visited_pfx() $PREFIX - match elif - do not increment"
 		fi
 		if [ "$INFO" = "1" ]; then
-			printf_info "+INFO: is_visited_pfx () Already encountered $PREFIX - not incrementing unique prefix count"	
+			printf_info "+INFO: Already encountered $PREFIX - not incrementing unique prefix count"	
 		fi
 	fi
 	if [ ${VISITED_PFX["$PREFIX"]} != "true" ]; then
 		if [ "$DEBUG" = "1" ]; then
-			printf_debug "DEBUG: is_visited_pfx() - VISITED_PFX[PREFIX] != true so now setting VISITED_PFX[PREFIX] to true for $PREFIX"
+			printf_debug "DEBUG: is_visited_pfx() - $PREFIX - VISITED_PFX[PREFIX] != true now - setting VISITED_PFX[PREFIX]=true"
 		fi
 		VISITED_PFX["$PREFIX"]=true
 	fi
 	if [ "$DEBUG" = "1" ]; then
-		printf_debug "DEBUG: is_visited_pfx() VISITED_PFX[PREFIX] "${VISITED_PFX["$PREFIX"]}""
-		printf_debug "DEBUG: is_visited_pfx() irr_prefix_count: "$irr_prefix_count""
+		printf_debug "DEBUG: is_visited_pfx() $PREFIX - VISITED_PFX[PREFIX] "${VISITED_PFX["$PREFIX"]}""
+		printf_debug "DEBUG: is_visited_pfx() $PREFIX - irr_prefix_count: "$irr_prefix_count""
 	fi
 }
 
@@ -160,8 +160,8 @@ info_output() {
 	fi
 	VISITED_PFX_SRC[$KVP]=1
 	if [ "$DEBUG" = "1" ]; then
-        printf_debug "DEBUG: "$PFX_MATCH" for o loop iteration end"
-        printf_debug "DEBUG: unset PFX_MATCH (was: "$PFX_MATCH")"
+        printf_debug "DEBUG: $PREFIX $PFX_MATCH for o loop iteration end"
+        printf_debug "DEBUG: $PREFIX unset PFX_MATCH (was: "$PFX_MATCH")"
 	fi                                                      
 	unset PFX_MATCH
 }
@@ -540,7 +540,7 @@ process_as_sets() {
 
     # Parse maintainers for the member aut-num 
     AUT_MNT_IRR_OUT=$("$WHOIS" -h "$IRR" "$MEMBER" | grep -e "^mnt-by:\|^source:") 
-    # Check for aut-num mnt-by, accounting for possibility of multiple aut-nums with different mnt-by 
+    # Check for aut-num mnt-by, accounting for possibility of multiple aut-nums with different mnt-by (and mnt-lower)
     IFS=$' ' read -r -d '' -a AUT_MNT_ARRAY < <(echo "$AUT_MNT_IRR_OUT" | 
 	    awk '/^mnt-by:/ {print $2}' | tr '\n' ' ' && printf '\0') 
     IFS=$' ' read -r -d '' -a AUT_MNT_SRC_ARRAY < <(echo "$AUT_MNT_IRR_OUT" | 
@@ -618,7 +618,7 @@ process_as_sets() {
 							VISITED_PFX["$PREFIX"]=false
 						fi
 					if [ "$DEBUG" = "1" ]; then
-						printf_debug "DEBUG: top of for PREFIX loop"
+						printf_debug "DEBUG: $PREFIX top of for PREFIX loop"
 						printf_debug "DEBUG: for PREFIX loop PREFIX: $PREFIX"
 						printf_debug "DEBUG: for PREFIX loop VISITED_PFX[PREFIX]: "${VISITED_PFX["$PREFIX"]}""
 						#printf_debug "DEBUG: output loop - PREFIX: ["$PREFIX"] origin: ["$MEMBER"], increment counter"
@@ -635,6 +635,7 @@ process_as_sets() {
 				IFS=' '  read -r -a ROUTE_ORIGIN <<< $(echo -e "$ROUTE_IRR_OUT" | awk 'BEGIN {IGNORECASE=1} /^origin:/ {print $2}' | tr '\n' ' ') 
 				# Parse OriginAS: from RIR whois
 				ARIN_ORIGIN=$(whois -h whois.arin.net "r = $PREFIX" | grep "^OriginAS:" | awk '{print $2}')
+
 				## TODO: would be great to query other RIRs too but I don't yet know how to get this data from RIPE et al.
 				if [ -n "$ARIN_ORIGIN" ]; then
 					RIR_ORIGIN="$ARIN_ORIGIN"
@@ -648,12 +649,11 @@ process_as_sets() {
 				# Parse sources from ROUTE_IRR_OUT
 				IFS=' ' read -r -a ROUTE_SRC <<< $(echo -e "$ROUTE_IRR_OUT" | awk 'BEGIN {IGNORECASE=1} /^source:/ {print $2}' | tr '\n' ' ')
 				if [ "$DEBUG" = "1" ]; then
-					printf_debug "DEBUG: ROUTE_ORIGIN[@]: [${ROUTE_ORIGIN[@]}]"
-					printf_debug "DEBUG: ROUTE_MNT[@]: ["${ROUTE_MNT[@]}"]"
-					printf_debug "DEBUG: ROUTE_SRC[@]: [${ROUTE_SRC[@]}]"
-					printf_debug "DEBUG: i: $i"
-					printf_debug "DEBUG: ROUTE_SRC[i]: [${ROUTE_SRC["$i"]}]"
-					printf_debug "DEBUG: ROUTE_SRC: [$ROUTE_SRC]"
+					printf_debug "DEBUG: parse ROUTE_IRR_OUT ROUTE_ORIGIN[@]: [${ROUTE_ORIGIN[@]}]"
+					printf_debug "DEBUG: parse ROUTE_IRR_OUT ROUTE_MNT[@]: ["${ROUTE_MNT[@]}"]"
+					printf_debug "DEBUG: parse ROUTE_IRR_OUT ROUTE_SRC[@]: [${ROUTE_SRC[@]}]"
+					printf_debug "DEBUG: parse ROUTE_IRR_OUT ROUTE_SRC[i]: [${ROUTE_SRC["$i"]}]"
+					printf_debug "DEBUG: parse ROUTE_IRR_OUT ROUTE_SRC: [$ROUTE_SRC]"
 				fi
 			# Check if ROUTE_SRC has already been processed
 			for i in "${!ROUTE_SRC[@]}"; do		# begin for i 
@@ -681,18 +681,18 @@ process_as_sets() {
 						KVP="${PREFIX} ${ROUTE_SRC[$o]} ${ROUTE_MNT[$o]}"
 						if [ "$DEBUG" = "1" ]; then
 							printf_debug "DEBUG: for o loop iteration start"
-							printf_debug "DEBUG: Parsing route object KVP: ["$KVP"]"
+							printf_debug "DEBUG: in for o loop - Parsing route object KVP: ["$KVP"]"
 							printf_debug "DEBUG: in for o loop - VISITED_PFX[PREFIX]: ${VISITED_PFX["$PREFIX"]}"
-							printf_debug "DEBUG: ROUTE_ORIGIN[o]: [${ROUTE_ORIGIN[$o]}]"
-							printf_debug "DEBUG: ROUTE_MNT[o]: [${ROUTE_MNT[$o]}]"
-							printf_debug "DEBUG: ROUTE_SRC[o]: [${ROUTE_SRC[$o]}]"
-							printf_debug "DEBUG: AUT_MNT_ARRAY[@]: ["${AUT_MNT_ARRAY[@]}"]"
-							printf_debug "DBEUG: MEMBER: [$MEMBER]"
-							printf_debug "DEBUG: AUT_MNT: ["$AUT_MNT"]"
+							printf_debug "DEBUG: in for o loop - ROUTE_ORIGIN[o]: [${ROUTE_ORIGIN[$o]}]"
+							printf_debug "DEBUG: in for o loop - ROUTE_MNT[o]: [${ROUTE_MNT[$o]}]"
+							printf_debug "DEBUG: in for o loop - ROUTE_SRC[o]: [${ROUTE_SRC[$o]}]"
+							printf_debug "DEBUG: in for o loop - AUT_MNT_ARRAY[@]: ["${AUT_MNT_ARRAY[@]}"]"
+							printf_debug "DBEUG: in for o loop - MEMBER: [$MEMBER]"
+							printf_debug "DEBUG: in for o loop - AUT_MNT: ["$AUT_MNT"]"
 						fi
 						if [ "${VISITED_PFX_SRC[$KVP]}" = "1" ]; then
 							if [ "$DEBUG" = "1" ]; then
-								printf_debug "DEBUG: VISITED_PFX_SRC[KVP]=1 ; continue and bail our of for o - KVP: ["$KVP"]"
+								printf_debug "DEBUG: VISITED_PFX_SRC[KVP]=1 ; continue and bail out of (continue) for o - KVP: ["$KVP"]"
 							fi
 							continue
                         fi
@@ -730,77 +730,23 @@ process_as_sets() {
 
 						if [ "${ROUTE_ORIGIN[$o]}" == "$MEMBER" ] &&  [ "${ROUTE_MNT[$o]}" == "$AUT_MNT" ]; then	# valid data match - case 0
 							PFX_MATCH="c0"
-							## CHANGE TO DEBUG
-							#if [ "$INFO" = "1" ]; then
-							#	printf_debug "DEBUG: c0 VISITED_PFX[PREFIX] "${VISITED_PFX["$PREFIX"]}""
-							#	printf_debug "DEBUG: c0 match - ROUTE_ORIGIN[o] == MEMBER and ROUTE_MNT[o] == AUT_MNT"
-							#	if [ ${VISITED_PFX["$PREFIX"]} = "true" ]; then	
-							#		printf_debug "DEBUG: c0 - match if VISITED_PFX[PREFIX]=true - is "${VISITED_PFX["$PREFIX"]}""
-							#		printf_debug "DEBUG: c0 - match if VISITED_PFX[PREFIX]-true - do not increment"
-							#	fi
-							#fi
 							is_visited_pfx
 							info_output
-
-							#if [ "$DEBUG" = "1" ]; then
-							#	printf_debug "DEBUG: c0 setting VISITED_PFX_SRC[KVP] =1 for ["$KVP"]"
-							#fi
-							#VISITED_PFX_SRC[$KVP]=1
-							#unset PFX_MATCH
-							#if [ "$DEBUG" = "1" ]; then
-							#	printf_debug "DEBUG: c0 for o loop iteration end"
-							#fi
-
 						elif [ "${ROUTE_ORIGIN[$o]}" == "$MEMBER" ] && [ "${ROUTE_MNT[$o]}" != "$AUT_MNT" ]; then	# mnt mismatch but will work - case 1
 							PFX_MATCH="c1"
-							## CHANGE TO DEBUG
-							#if [ "$INFO" = "1" ]; then
-							#	printf_debug "DEBUG: c1 match - ROUTE_ORIGIN[o] = MEMBER and ROUTE_MNT != AUT_MNT"
-							#	#printf_debug "DEBUG: c1 irr_prefix_count: "$irr_prefix_count""
-							#	#printf_debug "DEBUG: c1 initial VISITED_PFX[PREFIX] before if/elif matching: "${VISITED_PFX["$PREFIX"]}""
-							#fi
 							is_visited_pfx
 							info_output
-
-                            #if [ "$DEBUG" = "1" ]; then
-                            #    printf_debug "DEBUG: c1 setting VISITED_PFX_SRC[KVP] =1 for ["$KVP"]"
-                            #fi
-                            #VISITED_PFX_SRC[$KVP]=1
-							#unset PFX_MATCH
-							#if [ "$DEBUG" = "1" ]; then
-							#	printf_debug "DEBUG: c0 for o loop iteration end"
-							#fi
-
                         elif [ "${ROUTE_ORIGIN[$o]}" != "$MEMBER" ]; then    # origin/member mismatch - bogus IRR objects - case 2
 							PFX_MATCH="c2"
-							# CHANGE TO DEBUG
-							#if [ "$INFO" = "1" ]; then
-                            #    printf_debug "DEBUG: c2 match - ROUTE_ORIGIN[o] != MEMBER"
-                            #fi
 							is_visited_pfx
 							info_output
-
-							#if [ "$DEBUG" = "1" ]; then
-                            #    printf_debug "DEBUG: c2 setting VISITED_PFX_SRC[KVP] =1 for ["$KVP"]"
-                            #fi
-							#VISITED_PFX_SRC[$KVP]=1
-							#unset PFX_MATCH
-
 						elif [ "${#ROUTE_SRC[@]}" -gt 1 ]; then		# identical route and attributes in multiple registries - case 3
 							PFX_MATCH="c3"
-							# CHANGE TO DEBUG
-							#if [ "$INFO" = "1" ]; then
-                            #    printf_debug "DEBUG: c3 match - ROUTE_SRC[@] gt 1"
-                            #fi
 							is_visited_pfx
 							info_output
-							
-							#if [ "$DEBUG" = "1" ]; then
-                            #    printf_debug "DEBUG: setting VISITED_PFX_SRC[KVP] =1 for ["$KVP"]"
-                            #fi
-							#VISITED_PFX_SRC[$KVP]=1
 						else
 							PFX_MATCH="nomatch"
+							# CHANGE TO DEBUG
 							printf_debug "no case matched for prefix $PREFIX"
 						fi
 
@@ -821,7 +767,7 @@ process_as_sets() {
 			unset RIR_ORIGIN
 		    if [ "$DEBUG" = "1" ]; then
 			    printf_debug "DEBUG: unset RIR_ORIGIN"
-			    printf_debug "DEBUG: end of for PREFIX loop"
+			    printf_debug "DEBUG: $PREFIX end of for PREFIX loop"
 		    fi
 	    done	# end for PREFIX
             fi
