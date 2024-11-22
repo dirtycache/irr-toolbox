@@ -117,12 +117,31 @@ is_visited_pfx() {
 	fi
 }
 
+conditonal_supression() {
+	if [[ $PREFIX =~ ^44. ]]; then
+		if [ "$INFO" = "1" ]; then
+			printf_info "+INFO: 44net prefix detected, suppressing proxy reg warning because you can't create RIR route objects"
+			printf_info "+INFO: for 44net prefixes and they're often proxy registered for inclusion in filter prefix-lists, which"
+			printf_info "+INFO: is usually done by another mntner in a non-RIR registry"
+		fi
+	SUPPRESSED="true"
+	elif [[ "${ROUTE_MNT[$o]}" = "MAINT-AS20473" && "${ROUTE_SRC[$o]}" = "RADB" ]]; then
+		if [ "$INFO" = "1" ]; then
+			printf_info "+INFO: Suppressing mnt-by mismatch warning because it's Vultr in RADB, and that's just how they do things :("
+		fi
+	SUPPRESSED="true"
+	else
+	SUPPRESSED="true"
+	fi
+}
+
 info_output() {
 	if [ "$PFX_MATCH" = "c0" ]; then 
         # CHANGE TO DEBUG
         if [ "$INFO" = "1" ]; then
             printf_debug "+DEBUG: c0 match - ROUTE_ORIGIN[o] == MEMBER and ROUTE_MNT[o] == AUT_MNT"
         fi
+		conditonal_supression
         if [ "$INFO" = "1" ]; then
         	printf_info "+INFO: This route object has same mnt-by as origin AS - ${uline}best candidate IRR data!"
 		fi
@@ -130,17 +149,12 @@ info_output() {
 	elif [ "$PFX_MATCH" = "c1" ]; then
         # CHANGE TO DEBUG
         if [ "$INFO" = "1" ]; then
-            printf_debug "+DEBUG: c1 match - ROUTE_ORIGIN[o] = MEMBER and ROUTE_MNT != AUT_MNT"
+            printf_debug "+DEBUG: c1 match" 
         fi
-		if [ "$INFO" = "1" ]; then
-			if [[ $PREFIX =~ ^44. ]]; then
-				printf_info "+INFO: 44net prefix detected, suppressing proxy reg warning because you can't create RIR route objects"
-				printf_info "+INFO: for 44net prefixes and they're often proxy registered for inclusion in filter prefix-lists, which"
-				printf_info "+INFO: is usually done by another mntner in a non-RIR registry"
-			elif [[ "${ROUTE_MNT[$o]}" = "MAINT-AS20473" && "${ROUTE_SRC[$o]}" = "RADB" ]]; then
-				printf_info "+INFO: Suppressing mnt-by mismatch warning because it's Vultr in RADB, and that's just how they do things :("
-			else 
-        		printf_info_bold "+INFO: route: "$PREFIX" mnt-by: "${ROUTE_MNT[$o]}" ["${ROUTE_SRC[$o]}"] != "$MEMBER" mnt-by: "$AUT_MNT" ["$AUT_MNT_SRC"]"
+		conditonal_supression
+		if [ "$SUPPRESSED" != "true" ]; then
+			if [ "$INFO" = "1" ]; then
+        		printf_info_bold "+INFO: route: "$PREFIX" mnt-by: "${ROUTE_MNT[$o]}" ["${ROUTE_SRC[$o]}"] != "$MEMBER" mnt-by: "$MY_MNT"" 
         		printf_info_bold "+INFO: route: is either proxy registered or bogus data."
 			fi
 		fi
@@ -150,22 +164,24 @@ info_output() {
         if [ "$INFO" = "1" ]; then
 			printf_debug "+DEBUG: c2 match - ROUTE_ORIGIN[o] != MEMBER"
 		fi
+		conditonal_supression
 
 	elif [ "$PFX_MATCH" = "c3" ]; then
 		# CHANGE TO DEBUG
         if [ "$INFO" = "1" ]; then
             printf_debug "+DEBUG: c3 match - route with identical attributes seen in >1 registry"
 		fi
+		conditonal_supression
         printf_warning "+WARNING: This route object exists identically in multi reg. - ${uline}best candidate IRR data, consider deleting redundant data"
+
 	elif [ "$PFX_MATCH" = "c4" ]; then
 		# CHANGE TO DEBUG
         if [ "$INFO" = "1" ]; then
             printf_debug "+DEBUG: c4 match - [at least 1] route origin inconsistent with RIR origin"
 		fi
-		#printf_info "+INFO: route: $PREFIX enumerated from as-set: $AS_SET member: $MEMBER"
-		#printf_info "+INFO: +Inconsistent with RIR [$RIR] OriginAS: $RIR_ORIGIN"
-		#printf_info "+INFO: +Fix data either in route origin: or with RIR: $RIR"
+		conditonal_supression
 	fi
+	
 	if [ "$INFO" = "1" ]; then
     	printf_info "+INFO: Cumulative unique prefix count: $irr_prefix_count"
 	fi
@@ -206,7 +222,7 @@ route_qty_check () {
 				fi
 			else
 				if [ "$INFO" = "1" ]; then
-					printf_warn "+WARNING:   ["$i"] route: $PREFIX source: "${ROUTE_SRC["$i"]}" mnt-by: "${ROUTE_MNT["$i"]}" origin: "${ROUTE_ORIGIN["$i"]}""
+					printf_info "+INFO:   ["$i"] route: $PREFIX source: "${ROUTE_SRC["$i"]}" mnt-by: "${ROUTE_MNT["$i"]}" origin: "${ROUTE_ORIGIN["$i"]}""
 				fi
 			fi
 		done
@@ -229,30 +245,45 @@ route_origin_irr_check() {
 				break
 			fi
 		done
+
 		if [ $ALL_SAME_ORIGIN == true ] && [ "$INFO" = "1" ]; then
 			printf_info "+INFO: All route objects contain origin: $ROUTE_ORIGIN"
 		elif [ $ALL_SAME_ORIGIN == false ]; then
 			printf_warn "+WARNING: >1 route origin seen in IRR data! Filter generation may be inaccurate!"
 			#printf_debug "DEBUG: RIR_ORIGIN: "$RIR_ORIGIN""
-				for i in "${!ROUTE_ORIGIN[@]}"; do
-					if [ "${ROUTE_ORIGIN["$i"]}" != "$RIR_ORIGIN" ]; then
-						printf_warn "+WARNING: Found IRR ["$i"] route: $PREFIX - ORIGIN MISMATCH - route: origin: "${ROUTE_ORIGIN["$i"]}" != RIR OriginAS: "$RIR_ORIGIN""
-						if [ "${ROUTE_ORIGIN["$i"]}" = "$MEMBER" ]; then
-							#printf_debug "DEBUG: AS_SET: "$AS_SET""
-							#printf_debug "DEBUG: MEMBER_ASS: "$MEMBER_ASS""
-							printf_warn "+WARNING:  This object with origin: "${ROUTE_ORIGIN["$i"]}" is how $PREFIX is included (via "$AS_SET" member: "$MEMBER")"
-							printf_warn "+WARNING:  Be sure to add either:"
-							printf_warn "+WARNING:   a) member: <AS-SET which recurses to member: "$RIR_ORIGIN">"
-							printf_warn "+WARNING:   b) member: "$RIR_ORIGIN" (less preferable method)"
-							printf_warn "+WARNING:  to AS-SET "$AS_SET" before you delete route: "$PREFIX" with origin: "${ROUTE_ORIGIN["$i"]}" from IRR"
+			for i in "${!ROUTE_ORIGIN[@]}"; do
+				#printf_debug "["$i"] top of for loop" 
+				#printf_debug "["$i"] 239 RIR_FOUND: "$RIR_FOUND""
+				if [ "${ROUTE_ORIGIN["$i"]}" != "$RIR_ORIGIN" ]; then
+					#printf_debug "["$i"] 241 ROUTE_ORIGIN[i] != RIR_ORIGIN"
+					printf_warn "+WARNING: ["$i"] Found IRR route: $PREFIX - ORIGIN MISMATCH - ["$ROUTE_SRC"] origin: "${ROUTE_ORIGIN["$i"]}" != RIR OriginAS: "$RIR_ORIGIN""
+					if [ "$RIR_FOUND" = "true" ]; then
+						#printf_debug "DEBUG: ["$i"] in for i 245 RIR_FOUND=true"
+						printf_warn "+WARNING: ["$i"] IT IS POSSIBLE "${ROUTE_ORIGIN["$i"]}" IS DOING SOMETHING NASTY! -- route should only have origin: $RIR_ORIGIN in IRR!"
+						if [ "$RIR_ORIGIN" = "${ROUTE_ORIGIN["$i"]}" ]; then
+							printf_warn "+WARNING: ["$i"] It is also very possible that $RIR_ORIGIN is the one with bad IRR data."
 						fi
-					elif  [ "${ROUTE_ORIGIN["$i"]}" = "$RIR_ORIGIN" ]; then
-						printf_warn "+WARNING: Found IRR ["$i"] route: $PREFIX - ORIGIN MATCH    - route: origin: "${ROUTE_ORIGIN["$i"]}" = RIR OriginAS: "$RIR_ORIGIN""
-					else 
-						printf_warn "+WARNING: Found IRR ["$i"] route: $PREFIX - ***DEBUG ORIGIN ELSE**** - route: origin: ["${ROUTE_ORIGIN["$i"]}"] + RIR OriginAS: ["$RIR_ORIGIN"]"
+					elif [ "$RIR_FOUND" = "false" ]; then
+						#printf_debug "DEBUG: ["$i"] in for i 247 RIR_FOUND=false"
+						printf_warn "+WARNING: ["$i"] route should only have origin: in IRR and without RIR OriginAS, it is ambiguous which is correct!"
+						printf_warn "+WARNING: ["$i"] origin specification was not found from RIR and was assumed, perhaps incorrectly, to be $MEMBER"
 					fi
-				done
+				elif  [ "${ROUTE_ORIGIN["$i"]}" = "$RIR_ORIGIN" ]; then
+					printf_warn "+WARNING: ["$i"] Found IRR route: $PREFIX - ORIGIN MATCH    - ["$ROUTE_SRC"] origin: "${ROUTE_ORIGIN["$i"]}" == RIR OriginAS: "$RIR_ORIGIN""
+				else 
+					printf_warn "+WARNING: ["$i"] Found IRR route: $PREFIX - ***DEBUG ORIGIN ELSE**** - route: origin: ["${ROUTE_ORIGIN["$i"]}"] + RIR OriginAS: ["$RIR_ORIGIN"]"
+				fi
+				#printf_debug "["$i"] bottom of for loop"
+			done
 		fi
+	fi
+	if [[ ${#ROUTE_ORIGIN[@]} -eq 1 && "$RIR_ORIGIN" != "$MEMBER" ]]; then
+		printf_warn "+WARNING:  The object with origin: "$MEMBER" appears to be the only way $PREFIX can possibly be"
+		printf_warn "+WARNING:  included (via "$AS_SET" member: "$MEMBER")"
+		printf_warn "+WARNING:  You need to modify your IRR data for AS-SET "$AS_SET" so you have either:"
+		printf_warn "+WARNING:   a) member: <AS-SET which recurses to member: "$RIR_ORIGIN">"
+		printf_warn "+WARNING:   b) member: "$RIR_ORIGIN" (less preferable method)"
+		printf_warn "+WARNING:  before you delete route: "$PREFIX" with origin: "${ROUTE_ORIGIN["$i"]}" from IRR"
 	fi
 }
 
@@ -677,18 +708,24 @@ process_as_sets() {
     if [ "$DEBUG" = "1" ]; then 
 	    printf_debug "DEBUG: <process_aut_nums> AUT_MNT_IRR_OUT: ["$AUT_MNT_IRR_OUT"]" 
 	    printf_debug "DEBUG: <process_aut_nums> AUT_MNT_ARRAY[@]: [${AUT_MNT_ARRAY[@]}]" 
-	    printf_debug "DEBUG: <process_aut_nums> AUT_MNT_SRC_ARRAY[@]: [${AUT_MNT_SRC_ARRAY[@]}]"
+	    printf_debug "DEBUG: <process_aut_nums> AUT_MNT_SRC_ARRAY[@]: ["${AUT_MNT_SRC_ARRAY[@]}"]"
 	    printf_debug "DEBUG: <process_aut_nums> MEMBER: $MEMBER"
     fi
-    if [[ "${#AUT_MNT_ARRAY[@]}" -eq 1 && "${#AUT_MNT_SRC_ARRAY[@]}" -eq 1 ]]; then 
+
+	#printf_debug "700 {#AUT_MNT_ARRAY[@]}: "${#AUT_MNT_ARRAY[@]}""
+	#printf_debug "701 {#AUT_MNT_SRC_ARRAY[@]}: "${#AUT_MNT_SRC_ARRAY[@]}""
+	#printf_debug "702 {AUT_MNT_ARRAY[@]}: "${AUT_MNT_ARRAY[@]}""
+	#printf_debug "703 {AUT_MNT_SRC_ARRAY[@]}: "${AUT_MNT_SRC_ARRAY[@]}""
+
+	if [[ "${#AUT_MNT_ARRAY[@]}" -eq 1 && "${#AUT_MNT_SRC_ARRAY[@]}" -eq 1 ]]; then 
 	    AUT_MNT=$(echo "${AUT_MNT_ARRAY[0]}" | 
 		    awk '{$1=$1};1')
             AUT_MNT_SRC=$(echo "${AUT_MNT_SRC_ARRAY[0]}" | 
 		    awk '{$1=$1};1')
             if [ "$DEBUG" = "1" ]; then 
-		    printf_debug "DEBUG: <process_aut_nums> AUT_MNT: ["$AUT_MNT"]" 
-		    printf_debug "DEBUG: <process_aut_nums> AUT_MNT_SRC: ["$AUT_MNT_SRC"]"
-	    fi
+		    	printf_debug "DEBUG: <process_aut_nums> AUT_MNT: ["$AUT_MNT"]" 
+		    	printf_debug "DEBUG: <process_aut_nums> AUT_MNT_SRC: ["$AUT_MNT_SRC"]"
+	    	fi
     else 
 	    ## OUTPUT
 	    printf_warn "+WARNING: Too much member!"
@@ -773,23 +810,25 @@ process_as_sets() {
 					if [ "$DEBUG" = "1" ]; then
 						printf_debug "DEBUG: 702 ROUTE_IRR_OUT: ["$ROUTE_IRR_OUT"]"
 					fi
+					
 					# set AUT_MNT
 					AUT_MNT=$(echo "${AUT_MNT_ARRAY[0]}" | awk '{$1=$1};1')
+					
 					# Count the number of route: objects found in IRR
 					IFS=' ' read -r -a ROUTE_QTY <<< $(echo -e "$ROUTE_IRR_OUT" | grep -e "^route:\|^source:" | awk '/^route:/ {route=$0} /^source:/ {source=$0; if (source !~ /RPKI/) {print route} route=""; source=""}' | awk '{print $1}' | tr '\n' ' ')
+					
 					# Parse origins from ROUTE_IRR_OUT
 					IFS=' '  read -r -a ROUTE_ORIGIN <<< $(echo -e "$ROUTE_IRR_OUT" | awk 'BEGIN {IGNORECASE=1} /^origin:/ {print $2}' | tr '\n' ' ') 
+					
 					# Parse OriginAS: from RIR whois
 					ARIN_ORIGIN=$(whois -h whois.arin.net "r = $PREFIX" | grep "^OriginAS:" | awk '{print $2}')
-
+					
 					## TODO: would be great to query other RIRs too but I don't yet know how to get this data from RIPE et al.
 					if [ -n "$ARIN_ORIGIN" ]; then
 						RIR_ORIGIN="$ARIN_ORIGIN"
 						RIR="ARIN"
 					fi
-					if [ "$DEBUG" = "1" ]; then
-						printf_debug "DEBUG: ----- Found $PREFIX OriginAS: from whois.arin.net - RIR_ORIGIN: ["$RIR_ORIGIN"]"
-					fi
+					
 					# Parse maintainers from ROUTE_IRR_OUT
 					IFS=' ' read -r -a ROUTE_MNT <<< $(echo -e "$ROUTE_IRR_OUT" | awk 'BEGIN {IGNORECASE=1} /^mnt-by:/ {print $2}' | tr '\n' ' ')
 					# Parse sources from ROUTE_IRR_OUT
@@ -869,28 +908,43 @@ process_as_sets() {
 								fi
 							fi
 									
-							#printf_debug "DEBUG: RIR_ORIGIN: $RIR_ORIGIN"
 							if [ -z "$RIR_ORIGIN" ]; then
+								RIR_FOUND="false"
+								#printf_debug "DEBUG: 891 elif 0 RIR_FOUND: $RIR_FOUND"
+								printf_warn "+WARNING: Unable to determine origin AS for $PREFIX from RIR! Assumed to be $MEMBER"
 								if [ "$INFO" = "1" ]; then
 									printf_info "+INFO: RIR OriginAS: [notfound]"
 									printf_info "+INFO: Assuming route origin is $MEMBER (due to member: $MEMBER in AS-SET)"
-									RIR_ORIGIN="$MEMBER"
 								fi
-							elif [ "$ROUTE_MNT" = "$AUT_MNT" ]; then 
+								RIR_ORIGIN="$MEMBER"
+							elif [ "$RIR_ORIGIN" = "$ARIN_ORIGIN" ]; then
+								RIR_FOUND="true"
 								if [ "$INFO" = "1" ]; then
-									printf_info "INFO: route: mnt-by $ROUTE_MNT and aut-num: mnt-by $AUT_MNT match!"
+									printf_info "+INFO: RIR_ORIGIN known from ARIN_ORIGIN: $RIR_ORIGIN"
 								fi
 							elif [ "$RIR_ORIGIN" = "$MEMBER" ]; then
+								RIR_FOUND="true"
+								#printf_debug "DEBUG: 882 elif 0 RIR_FOUND: $RIR_FOUND"
 								if [ "$INFO" = "1" ]; then
-									printf_info "+INFO: RIR_ORIGIN already set: $RIR_ORIGIN"
+									printf_info "+INFO: RIR_ORIGIN already set because prefix already seen"
 								fi
 							else
-								printf_debug "+DEBUG: 876 no if clause  for RIR_ORIGIN matched"
+								RIR_FOUND="true"
+								if [ "$INFO" = "1" ]; then
+									printf_info "+INFO: RIR OriginAS: $RIR_ORIGIN"
+								fi
+							fi
+
+							if [ "$ROUTE_MNT" = "$AUT_MNT" ]; then 
+								if [ "$INFO" = "1" ]; then
+									printf_info "+INFO: route: mnt-by $ROUTE_MNT and aut-num: mnt-by $AUT_MNT match!"
+								fi
 							fi
 							route_qty_check
-						## Tag this prefix (the prefix/route:, not the prefix+src KVP) visited
-						#VISITED_PFX[$PREFIX]=true
-						# Now determine which scenario matches the data parsed
+
+							## Tag this prefix (the prefix/route:, not the prefix+src KVP) visited
+							#VISITED_PFX[$PREFIX]=true
+							# Now determine which scenario matches the data parsed
 
 						if [ "$RIR_ORIGIN" != "$ROUTE_ORIGIN" ]; then	# Found RIR origin but mismatch with route origin - case 4
 							PFX_MATCH="c4"
@@ -910,7 +964,6 @@ process_as_sets() {
 						is_visited_pfx
 						info_output
 						route_origin_irr_check
-						#unset RIR_ORIGIN
 
 						if [ "$DEBUG" = "1" ]; then
 							printf_debug "DEBUG: end of for o iteration"
