@@ -252,28 +252,39 @@ route_origin_irr_check() {
 			printf_warn "+WARNING: >1 route origin seen in IRR data! Filter generation may be inaccurate!"
 			#printf_debug "DEBUG: RIR_ORIGIN: "$RIR_ORIGIN""
 			for i in "${!ROUTE_ORIGIN[@]}"; do
-				#printf_debug "["$i"] top of for loop" 
-				#printf_debug "["$i"] 239 RIR_FOUND: "$RIR_FOUND""
+				printf_debug "["$i"] top of for loop" 
+				printf_debug "["$i"] 255 RIR_FOUND: "$RIR_FOUND""
+
+				# if 1
 				if [ "${ROUTE_ORIGIN["$i"]}" != "$RIR_ORIGIN" ]; then
+					printf_debug "["$i"] match if 1"
 					#printf_debug "["$i"] 241 ROUTE_ORIGIN[i] != RIR_ORIGIN"
 					printf_warn "+WARNING: ["$i"] Found IRR route: $PREFIX - ORIGIN MISMATCH - ["$ROUTE_SRC"] origin: "${ROUTE_ORIGIN["$i"]}" != RIR OriginAS: "$RIR_ORIGIN""
+
+					# if 1-1
 					if [ "$RIR_FOUND" = "true" ]; then
-						#printf_debug "DEBUG: ["$i"] in for i 245 RIR_FOUND=true"
+						printf_debug "["$i"] match if 1-1"
 						printf_warn "+WARNING: ["$i"] IT IS POSSIBLE "${ROUTE_ORIGIN["$i"]}" IS DOING SOMETHING NASTY! -- route should only have origin: $RIR_ORIGIN in IRR!"
 						if [ "$RIR_ORIGIN" = "${ROUTE_ORIGIN["$i"]}" ]; then
+							# if 1-1-1
+							printf_debug "["$i"] match if 1-1-1"
 							printf_warn "+WARNING: ["$i"] It is also very possible that $RIR_ORIGIN is the one with bad IRR data."
 						fi
 					elif [ "$RIR_FOUND" = "false" ]; then
+						printf_debug "["$i"] match 1-1 elif"
 						#printf_debug "DEBUG: ["$i"] in for i 247 RIR_FOUND=false"
 						printf_warn "+WARNING: ["$i"] route should only have origin: in IRR and without RIR OriginAS, it is ambiguous which is correct!"
 						printf_warn "+WARNING: ["$i"] origin specification was not found from RIR and was assumed, perhaps incorrectly, to be $MEMBER"
 					fi
+
 				elif  [ "${ROUTE_ORIGIN["$i"]}" = "$RIR_ORIGIN" ]; then
+				printf_debug "["$i"] match if 1 elif"
 					printf_warn "+WARNING: ["$i"] Found IRR route: $PREFIX - ORIGIN MATCH    - ["$ROUTE_SRC"] origin: "${ROUTE_ORIGIN["$i"]}" == RIR OriginAS: "$RIR_ORIGIN""
 				else 
+				printf_debug "["$i"] match if 1 else"
 					printf_warn "+WARNING: ["$i"] Found IRR route: $PREFIX - ***DEBUG ORIGIN ELSE**** - route: origin: ["${ROUTE_ORIGIN["$i"]}"] + RIR OriginAS: ["$RIR_ORIGIN"]"
 				fi
-				#printf_debug "["$i"] bottom of for loop"
+				printf_debug "["$i"] bottom of for loop"
 			done
 		fi
 	fi
