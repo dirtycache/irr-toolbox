@@ -6,12 +6,16 @@
 ## This code is maintained by
 ## Adam Korab 
 ## and is contributed to by 
-## Adam Korab, Dan Gast, Tim Burke, Justin Handa, and Swen Wulf
+## Adam Korab, Dan Gast, Tim Burke, Justin Handa, Swen Wulf
 ##
 ## Spiritual inspiration comes from and gratitude for supporting work goes to:
+##
 ## IRR Explorer	(DashCare BV [https://www.dashcare.nl] + Stichting NLNOG [https://www.nlnog.net])
 ##  [https://irrexplorer.nlnog.net]
 ##  [https://github.com/nlnog/irrexplorer]
+##
+## Daniel Austin MBCS (https://www.dan.me.uk/filtergen)
+##
 ## Special thanks to Ken Kresha and the rest of the AS2914 crew for igniting my IRR knowledge and
 ## curiosity, way back a million years ago in the Y2K!
 
@@ -142,6 +146,65 @@ is_mask_le_24_warning() {
 	if (( CIDRMASK > 24 )) && [ "$WARNING" = "1" ]; then
 		printf_warning "+WARNING: Mask length >24.  This will not be accepted in global filter lists!"
 	fi
+}
+
+# Suck in the bogons db (once; no sense in doing it every time check_bogons() is called)
+BOGONDB=()
+while IFS= read -r bogondb_line; do
+    BOGONDB+=("$bogondb_line")
+done < "bogon-bn-nonagg.txt"
+
+check_bogons() {
+    ## There's some convoluted bitwise and hex value handling in this function.
+    ## Blame MS Visual Studio Code, it complained mightily about the first 4 ways I wrote this
+    ## and broke syntax highlighting through the rest of the script. Sorry. :(
+
+    local base_ip=${PREFIX%%/*}  # Extract base IP from $PREFIX
+    local bogon_match=0  # Flag to track if a match is found
+
+    for bogon in "${BOGONDB[@]}"; do
+        local bogon_base=${bogon%%/*}
+        local bogon_len=${bogon#*/}
+
+        # Convert the prefix's base IP to a 32-bit decimal
+        local a b c d
+        IFS=. read -r a b c d <<<"${base_ip}"
+        local base_dec=$(( (a * 256**3) + (b * 256**2) + (c * 256) + d ))
+
+        # Convert the bogon base IP to a 32-bit decimal
+        local e f g h
+        IFS=. read -r e f g h <<<"${bogon_base}"
+        local bogon_dec=$(( (e * 256**3) + (f * 256**2) + (g * 256) + h ))
+
+        # Calculate the shift value and mask for the range
+        local shift=$((32 - bogon_len))
+
+        # Manually construct the mask by shifting the bits in multiple steps
+        local mask_part1=$((0xFFFFFFFF))  # Full 32-bit mask
+        local mask=$((mask_part1 << shift))  # Apply the shift
+		
+		## Leaving the next two commented lines in there because it unfucks the syntax highlighter
+        # Alternatively, without hexadecimal:
+        # local mask=$(( ((1 << 32) - 1) << shift ))
+
+        # Check if the prefix falls within a bogon range
+        if (( (base_dec & mask) == (bogon_dec & mask) )); then
+            bogon_match=1  
+			IS_BOGON=1
+            break 
+        elif (( (base_dec & mask) != (bogon_dec & mask) )); then
+            IS_BOGON=0
+        else
+            printf_inverted "ERROR: check_bogons() else - corner case encountered for $PREFIX"
+			exit 1
+        fi
+    done
+
+    if ((bogon_match == 1)); then
+		IS_BOGON=1	# Bogon
+    else
+        IS_BOGON=0	# Not bogon
+    fi
 }
 
 info_output() {
@@ -836,52 +899,14 @@ process_as_sets() {
 					# Count the number of route: objects found in IRR
 					IFS=' ' read -r -a ROUTE_QTY <<< $(echo -e "$ROUTE_IRR_OUT" | grep -e "^route:\|^source:" | awk '/^route:/ {route=$0} /^source:/ {source=$0; if (source !~ /RPKI/) {print route} route=""; source=""}' | awk '{print $1}' | tr '\n' ' ')
 
-					# WIP determine if the prefix is within bogon territory
-					BOGONS=()
-					while IFS= read -r line; do
-						BOGONS+=("$line")
-					done < "bogon-bn-nonagg.txt"
-
-					check_bogons() {
-    					local prefix="$1"
-    					local range="$2"
-
-    					# Extract base IP and CIDR
-    					local base_ip=${prefix%%/*}
-    					local prefix_len=${prefix#*/}
-
-    					# Extract range IP and CIDR
-    					local range_ip=${range%%/*}
-    					local range_len=${range#*/}
-
-    					# Convert IPs to 32-bit numbers
-    					IFS=. read -r a b c d <<<"$base_ip"
-    					local base_dec=$((a << 24 | b << 16 | c << 8 | d))
-
-    					IFS=. read -r e f g h <<<"$range_ip"
-    					#local range_dec=$((e << 24 | f << 16 | g << 8 | h))
-
-    					## Calculate the mask for the range
-    					#local mask=$((0xFFFFFFFF << (32 - range_len) & 0xFFFFFFFF))
-
-    					## Check if the prefix falls within the range
-    					#if (( (base_dec & mask) == (range_dec & mask) )); then
-        				#	return 0  # Match
-    					#else
-        				#	return 1  # No match
-    					#fi
-
-						## Check the prefix against all ranges
-						#for RANGE in "${RANGES[@]}"; do
-    					#	if check_in_range "$CIDR_PREFIX" "$RANGE"; then
-        				#		echo "$CIDR_PREFIX falls within $RANGE"
-    					#	fi
-						#done
-					}
-
+					# See if the prefix is within bogon territory
+					# But first, unset IS_BOGON from any previous invocation of check_bogons()
+					unset IS_BOGON
+					check_bogons
+					
 					# WIP Determine which RIR covers the prefix
 					IANA_SLASH8="$(echo "$PREFIX" | cut -d '.' -f1)"
-					printf_inverted "IANA_SLASH8: $IANA_SLASH8"
+					#printf_inverted "IANA_SLASH8: $IANA_SLASH8"
 					
 					#printf_debug "IANA RIR: $RIR"
 					
@@ -1053,6 +1078,10 @@ process_as_sets() {
 								elif [ "$INFO" = "1" ]; then
 									printf "\n$PREFIX\n"
 									printf_info "+INFO: Prefix length: $CIDRMASK"
+									if [ "$IS_BOGON" = "0" ]; then
+										printf_info "+INFO: Not part of known bogon space"
+									fi
+									# WIP query the return of IS_BOGON
 									printf_info "+INFO: RIR: "$RIR""
 									printf_info "+INFO: Found ARIN OrgID: "$ARIN_ORG_ID""
 									printf_info "+INFO: Found ARIN OrgID RDAP Ref: "$ARIN_ORG_REF""
@@ -1122,6 +1151,7 @@ process_as_sets() {
 								fi
 
 								is_visited_pfx
+								check_bogons
 								info_output
 								route_origin_irr_check
 								is_mask_le_24_warning
