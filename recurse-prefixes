@@ -444,6 +444,15 @@ if [ "$DEBUG" = "1" ]; then
     printf_debug "DEBUG: DEBUG: [$DEBUG]"
 fi
 
+# Declare the 5 RIRs and their whois servers
+declare -A WHOISDB=(
+    [AFRINIC]="whois.afrinic.net"
+    [APNIC]="whois.apnic.net"
+    [ARIN]="whois.arin.net"
+    [LACNIC]="whois.lacnic.net"
+    [RIPE]="whois.ripe.net"
+	[IANA]="whois.iana.org"
+)
 ## function get_member_autnums
 get_member_autnums() { grep "^members:" | awk '{print $2}' | tr , '\n' | grep -v "AS-"; }
 
@@ -826,6 +835,55 @@ process_as_sets() {
 					
 					# Count the number of route: objects found in IRR
 					IFS=' ' read -r -a ROUTE_QTY <<< $(echo -e "$ROUTE_IRR_OUT" | grep -e "^route:\|^source:" | awk '/^route:/ {route=$0} /^source:/ {source=$0; if (source !~ /RPKI/) {print route} route=""; source=""}' | awk '{print $1}' | tr '\n' ' ')
+
+					# WIP determine if the prefix is within bogon territory
+					BOGONS=()
+					while IFS= read -r line; do
+						BOGONS+=("$line")
+					done < "bogon-bn-nonagg.txt"
+
+					check_bogons() {
+    					local prefix="$1"
+    					local range="$2"
+
+    					# Extract base IP and CIDR
+    					local base_ip=${prefix%%/*}
+    					local prefix_len=${prefix#*/}
+
+    					# Extract range IP and CIDR
+    					local range_ip=${range%%/*}
+    					local range_len=${range#*/}
+
+    					# Convert IPs to 32-bit numbers
+    					IFS=. read -r a b c d <<<"$base_ip"
+    					local base_dec=$((a << 24 | b << 16 | c << 8 | d))
+
+    					IFS=. read -r e f g h <<<"$range_ip"
+    					#local range_dec=$((e << 24 | f << 16 | g << 8 | h))
+
+    					## Calculate the mask for the range
+    					#local mask=$((0xFFFFFFFF << (32 - range_len) & 0xFFFFFFFF))
+
+    					## Check if the prefix falls within the range
+    					#if (( (base_dec & mask) == (range_dec & mask) )); then
+        				#	return 0  # Match
+    					#else
+        				#	return 1  # No match
+    					#fi
+
+						## Check the prefix against all ranges
+						#for RANGE in "${RANGES[@]}"; do
+    					#	if check_in_range "$CIDR_PREFIX" "$RANGE"; then
+        				#		echo "$CIDR_PREFIX falls within $RANGE"
+    					#	fi
+						#done
+					}
+
+					# WIP Determine which RIR covers the prefix
+					IANA_SLASH8="$(echo "$PREFIX" | cut -d '.' -f1)"
+					printf_inverted "IANA_SLASH8: $IANA_SLASH8"
+					
+					#printf_debug "IANA RIR: $RIR"
 					
 					# Parse origins from ROUTE_IRR_OUT
 					IFS=' '  read -r -a ROUTE_ORIGIN <<< $(echo -e "$ROUTE_IRR_OUT" | awk 'BEGIN {IGNORECASE=1} /^origin:/ {print $2}' | tr '\n' ' ') 
@@ -833,7 +891,12 @@ process_as_sets() {
 					# Parse OriginAS: from RIR whois
 					ARIN_ORIGIN=$(whois -h whois.arin.net "r = $PREFIX" | grep "^OriginAS:" | awk '{print $2}')
 					
-					## TODO: would be great to query other RIRs too but I don't yet know how to get this data from RIPE et al.
+					#AFRINIC
+					#ARIN
+					#APNIC
+					#LACNIC
+					#RIPE
+
 					if [ -n "$ARIN_ORIGIN" ]; then
 						RIR_ORIGIN="$ARIN_ORIGIN"
 						RIR="ARIN"
@@ -916,7 +979,64 @@ process_as_sets() {
 								if [ -z "$ARIN_ORG_REF" ]; then
 									ARIN_ORG_REF="arin_no_match_found"
 								fi
-								# TODO Get aut-num(s) for OrgID
+								# WIP TODO Get aut-num(s) for OrgID
+# note to future me: remember that ARIN RDAP for the Org contains 
+# 
+# '.autnums[].handle[0]'
+# for the autnum handle under the OrgID
+#
+# and also:
+# '.networks' like below which specify the origin AS of the particular number resource:
+#
+# {
+#  "handle": "NET-23-169-240-0-1",
+#  "startAddress": "23.169.240.0",
+#  "endAddress": "23.169.240.255",
+#  "ipVersion": "v4",
+#  "name": "NET4-MIDNET-240",
+#  "type": "DIRECT ALLOCATION",
+#  "parentHandle": "NET-23-0-0-0-0",
+#  "events": [
+#    {
+#      "eventAction": "last changed",
+#      "eventDate": "2024-11-13T19:47:22-05:00"
+#    },
+#    {
+#      "eventAction": "registration",
+#      "eventDate": "2020-11-30T14:51:19-05:00"
+#    }
+#  ],
+#  "links": [
+#    {
+#      "value": "https://rdap.arin.net/registry/entity/ML-1398",
+#      "rel": "self",
+#      "type": "application/rdap+json",
+#      "href": "https://rdap.arin.net/registry/ip/23.169.240.0"
+#    },
+#    {
+#      "value": "https://rdap.arin.net/registry/entity/ML-1398",
+#      "rel": "alternate",
+#      "type": "application/xml",
+#      "href": "https://whois.arin.net/rest/net/NET-23-169-240-0-1"
+#    }
+#  ],
+#  "port43": "whois.arin.net",
+#  "status": [
+#    "active"
+#  ],
+#  "objectClassName": "ip network",
+#  "cidr0_cidrs": [
+#    {
+#      "v4prefix": "23.169.240.0",
+#      "length": 24
+#    }
+#  ],
+#  "arin_originas0_originautnums": [
+#    16970
+#  ]
+#}
+#
+								#WIP
 								#if [ "$ARIN_ORG_REF" != "arin_no_match_found" ]; then
 								#	ARIN_ORG_AUTNUM="$(curl -s "$ARIN_ORG_REF" | jq -c '.autnums[].handle[0]' | sed s/\"//g)"
 								#fi
