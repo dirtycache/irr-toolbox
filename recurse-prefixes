@@ -207,6 +207,111 @@ check_bogons() {
     fi
 }
 
+# Suck in the IANA IPv4 csv (once; no sense in doing it every time find_rir() is called)
+# Initialize the IANA_DB array to store the processed records
+IANA_DB=()
+
+# Define the variable for holding the current record
+iana_line=""
+
+# Read the IANA IPv4 CSV
+while IFS=, read -r iana_prefix _ _ iana_whois _ iana_rdap iana_status _; do
+    # Skip the header row
+    if [[ $iana_prefix == "Prefix" ]]; then
+        continue
+    fi
+
+    # Skip the line if the prefix doesn't match the valid /8 prefix regex (0.0.0.0/8 to 255.0.0.0/8)
+	if [[ ! "$iana_prefix" =~ ^([0-9]{1,3})/8$ ]]; then
+        continue
+    fi
+
+    # Check if the RDAP field contains a multi-line value
+    # We assume that multi-line fields (RDAP) start with a URL (http:// or https://)
+    if [[ "$iana_rdap" =~ ^http(s)?:// ]]; then
+        # If the RDAP field is multi-line, we append the next line until we find the full URL
+        # Read the next line to check if it's part of the multi-line RDAP URL
+        read -r next_iana_prefix _ _ _ _ next_iana_rdap _ _ 
+        iana_rdap="$iana_rdap $next_iana_rdap"
+    fi
+
+    # Handle cases where there may be other multi-line fields, like Status
+    # Here, we'll append the next line if necessary, but we only do it if `iana_status` is empty
+    if [[ -z "$iana_status" && -n "$iana_note" ]]; then
+        iana_status="$iana_note"
+        iana_note=""
+    fi
+
+    # Process the current row and store it in the IANA_DB array, using pipes as the delimiter
+    IANA_DB+=("$iana_prefix|$iana_status|$iana_whois")
+
+done < "IANA-ipv4-address-space.csv"
+
+# After the loop ends, process the last record if any
+if [[ -n "$iana_line" ]]; then
+    IFS='|' read -r last_iana_prefix last_iana_designation last_iana_status last_iana_rdap <<< "$iana_line"
+    IANA_DB+=("$last_iana_prefix|$last_iana_designation|$last_iana_status|$iana_rdap")
+fi
+
+rir_query() {
+	printf_inverted "rir_query() start"
+	IANA_SLASH8="$(echo "$PREFIX" | cut -d '.' -f1)/8"
+    for line in "${IANA_DB[@]}"; do
+        # Split the entry into individual components
+        IFS='|' read -r iana_prefix iana_designation iana_status iana_whois <<< "$line"
+
+		# Check if the current entry matches the IANA_SLASH8
+        if [[ $iana_prefix == "$IANA_SLASH8" ]]; then
+            # If the status is RESERVED, set IS_BOGON=1 and exit immediately
+            if [[ $iana_status == "RESERVED" ]]; then
+                printf_inverted "rir_query() IANA status=RESERVED - is bogon"
+				IS_BOGON=1
+                break
+		else
+			printf_debug "iana_prefix: $iana_prefix not match iana_slash8: $IANA_SLASH8"
+            fi
+
+            # If the status is ALLOCATED or LEGACY, evaluate iana_whois
+            if [[ $iana_status == "ALLOCATED" || $iana_status == "LEGACY" ]]; then
+                if [[ $iana_whois == *"apnic"* ]]; then
+                    RIR="APNIC"
+					printf_inverted "rir_query() match RIR=$RIR"
+                elif [[ $iana_whois == *"ripe"* ]]; then
+                    RIR="RIPE"
+					printf_inverted "rir_query() match RIR=$RIR"
+                elif [[ $iana_whois == *"arin"* ]]; then
+                    RIR="ARIN"
+					printf_inverted "rir_query() match RIR=$RIR"
+                elif [[ $iana_whois == *"afrinic"* ]]; then
+                    RIR="AFRINIC"
+					printf_inverted "rir_query() match RIR=$RIR"
+                elif [[ $iana_whois == *"lacnic"* ]]; then
+                    RIR="LACNIC"
+					printf_inverted "rir_query() match RIR=$RIR"
+                else
+                    printf_inverted "+ERROR: RIR match failure for $PREFIX"
+                fi
+            fi
+            # Exit loop after evaluating the matching line
+            break
+        fi
+    done
+
+	# query ARIN 
+	#if [ "$RIR" = "ARIN" ]; then
+	#	# OrgId
+	#	ARIN_ORG_ID=$(whois -h whois.arin.net "r = $PREFIX" | awk '/^OrgId:/ {print $2}')
+	#	if [ -z "$ARIN_ORG_ID" ]; then
+	#		ARIN_ORG_ID="arin_no_match_found"
+	#	fi
+	#	# Ref URL for OrgId
+	#	ARIN_ORG_REF=$(whois -h whois.arin.net "r = $PREFIX" | awk '/^OrgId:/ {found=1} found && /^Ref:/ {print $2; exit}')
+	#	if [ -z "$ARIN_ORG_REF" ]; then
+	#		ARIN_ORG_REF="arin_no_match_found"
+	#	fi
+	#fi
+}
+
 info_output() {
 	if [ "$PFX_MATCH" = "c0" ]; then 
         # CHANGE TO DEBUG
@@ -905,10 +1010,8 @@ process_as_sets() {
 					check_bogons
 					
 					# WIP Determine which RIR covers the prefix
-					IANA_SLASH8="$(echo "$PREFIX" | cut -d '.' -f1)"
-					#printf_inverted "IANA_SLASH8: $IANA_SLASH8"
+					# WIP iana_function
 					
-					#printf_debug "IANA RIR: $RIR"
 					
 					# Parse origins from ROUTE_IRR_OUT
 					IFS=' '  read -r -a ROUTE_ORIGIN <<< $(echo -e "$ROUTE_IRR_OUT" | awk 'BEGIN {IGNORECASE=1} /^origin:/ {print $2}' | tr '\n' ' ') 
@@ -970,6 +1073,7 @@ process_as_sets() {
 						printf_debug "DEBUG: in for i loop count ROUTE_ORIGIN@*]: ["${#ROUTE_ORIGIN[@]}"]"
 						printf_debug "DEBUG: in for i loop ROUTE_ORIGIN[i]: [${ROUTE_ORIGIN["$i"]}]"
 					fi
+
 					if [ "${VISITED_PFX_SRC[$KVP]}" = "0" ]; then
 						# Check for multiple origins of this route
 						for o in "${!ROUTE_ORIGIN[@]}"; do	# begin for o
@@ -992,80 +1096,69 @@ process_as_sets() {
 								continue
                         	fi
 
-							# query ARIN 
-							if [ "$RIR" = "ARIN" ]; then
-								# OrgId
-								ARIN_ORG_ID=$(whois -h whois.arin.net "r = $PREFIX" | awk '/^OrgId:/ {print $2}')
-								if [ -z "$ARIN_ORG_ID" ]; then
-									ARIN_ORG_ID="arin_no_match_found"
-								fi
-								# Ref URL for OrgId
-								ARIN_ORG_REF=$(whois -h whois.arin.net "r = $PREFIX" | awk '/^OrgId:/ {found=1} found && /^Ref:/ {print $2; exit}')
-								if [ -z "$ARIN_ORG_REF" ]; then
-									ARIN_ORG_REF="arin_no_match_found"
-								fi
-								# WIP TODO Get aut-num(s) for OrgID
-# note to future me: remember that ARIN RDAP for the Org contains 
-# 
-# '.autnums[].handle[0]'
-# for the autnum handle under the OrgID
-#
-# and also:
-# '.networks' like below which specify the origin AS of the particular number resource:
-#
-# {
-#  "handle": "NET-23-169-240-0-1",
-#  "startAddress": "23.169.240.0",
-#  "endAddress": "23.169.240.255",
-#  "ipVersion": "v4",
-#  "name": "NET4-MIDNET-240",
-#  "type": "DIRECT ALLOCATION",
-#  "parentHandle": "NET-23-0-0-0-0",
-#  "events": [
-#    {
-#      "eventAction": "last changed",
-#      "eventDate": "2024-11-13T19:47:22-05:00"
-#    },
-#    {
-#      "eventAction": "registration",
-#      "eventDate": "2020-11-30T14:51:19-05:00"
-#    }
-#  ],
-#  "links": [
-#    {
-#      "value": "https://rdap.arin.net/registry/entity/ML-1398",
-#      "rel": "self",
-#      "type": "application/rdap+json",
-#      "href": "https://rdap.arin.net/registry/ip/23.169.240.0"
-#    },
-#    {
-#      "value": "https://rdap.arin.net/registry/entity/ML-1398",
-#      "rel": "alternate",
-#      "type": "application/xml",
-#      "href": "https://whois.arin.net/rest/net/NET-23-169-240-0-1"
-#    }
-#  ],
-#  "port43": "whois.arin.net",
-#  "status": [
-#    "active"
-#  ],
-#  "objectClassName": "ip network",
-#  "cidr0_cidrs": [
-#    {
-#      "v4prefix": "23.169.240.0",
-#      "length": 24
-#    }
-#  ],
-#  "arin_originas0_originautnums": [
-#    16970
-#  ]
-#}
-#
-								#WIP
-								#if [ "$ARIN_ORG_REF" != "arin_no_match_found" ]; then
-								#	ARIN_ORG_AUTNUM="$(curl -s "$ARIN_ORG_REF" | jq -c '.autnums[].handle[0]' | sed s/\"//g)"
-								#fi
-							fi
+
+							
+					# WIP TODO Get aut-num(s) for OrgID
+					# note to future me: remember that ARIN RDAP for the Org contains 
+					# 
+					# '.autnums[].handle[0]'
+					# for the autnum handle under the OrgID
+					#
+					# and also:
+					# '.networks' like below which specify the origin AS of the particular number resource:
+					#
+					# {
+					#  "handle": "NET-23-169-240-0-1",
+					#  "startAddress": "23.169.240.0",
+					#  "endAddress": "23.169.240.255",
+					#  "ipVersion": "v4",
+					#  "name": "NET4-MIDNET-240",
+					#  "type": "DIRECT ALLOCATION",
+					#  "parentHandle": "NET-23-0-0-0-0",
+					#  "events": [
+					#    {
+					#      "eventAction": "last changed",
+					#      "eventDate": "2024-11-13T19:47:22-05:00"
+					#    },
+					#    {
+					#      "eventAction": "registration",
+					#      "eventDate": "2020-11-30T14:51:19-05:00"
+					#    }
+					#  ],
+					#  "links": [
+					#    {
+					#      "value": "https://rdap.arin.net/registry/entity/ML-1398",
+					#      "rel": "self",
+					#      "type": "application/rdap+json",
+					#      "href": "https://rdap.arin.net/registry/ip/23.169.240.0"
+					#    },
+					#    {
+					#      "value": "https://rdap.arin.net/registry/entity/ML-1398",
+					#      "rel": "alternate",
+					#      "type": "application/xml",
+					#      "href": "https://whois.arin.net/rest/net/NET-23-169-240-0-1"
+					#    }
+					#  ],
+					#  "port43": "whois.arin.net",
+					#  "status": [
+					#    "active"
+					#  ],
+					#  "objectClassName": "ip network",
+					#  "cidr0_cidrs": [
+					#    {
+					#      "v4prefix": "23.169.240.0",
+					#      "length": 24
+					#    }
+					#  ],
+					#  "arin_originas0_originautnums": [
+					#    16970
+					#  ]
+					#}
+					#
+
+					#WIP
+					#if [ "$ARIN_ORG_REF" != "arin_no_match_found" ]; then
+					#	ARIN_ORG_AUTNUM="$(curl -s "$ARIN_ORG_REF" | jq -c '.autnums[].handle[0]' | sed s/\"//g)"
 
 							# OUTPUT
 							if [ "${VISITED_PFX["$PREFIX"]}" = "true" ]; then	
@@ -1151,6 +1244,8 @@ process_as_sets() {
 								fi
 
 								is_visited_pfx
+								# WIP - busted
+								#rir_query
 								check_bogons
 								info_output
 								route_origin_irr_check
