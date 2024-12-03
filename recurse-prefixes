@@ -76,8 +76,45 @@ uline="\e[4m"
 blink="\e[5m"
 reset="\e[0m"
 
+### BEGIN SECTION: DATABASES
+
+## BOGONDB START
+# Suck in the bogons db 
+BOGONDB=()
+while IFS= read -r bogondb_line; do
+    BOGONDB+=("$bogondb_line")
+done < "bogon-bn-nonagg.txt"
+## BOGONDB END
+
+## IANA_DB START
+
+# Initialize the IANA_DB array to store the processed records
+IANA_DB=()
+IANA_SRC_FILE="ipv4-address-space.txt"
+
+    while IFS= read -r line; do
+        iana_prefix=$(echo "$line" | cut -c4-9 | sed 's/^0\{1,2\}//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//') 
+        iana_designation=$(echo "$line" | cut -c11-45 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//') 
+        iana_whois=$(echo "$line" | cut -c53-71 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')  
+        iana_status=$(echo "$line" | cut -c103-113 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')  
+        row="$(printf "%-10s|%-45s|%-25s|%-15s\n" "$iana_prefix" "$iana_designation" "$iana_whois" "$iana_status")"
+        # Append the formatted string to the array
+        IANA_DB+=("$row")
+	done < "$IANA_SRC_FILE"
+
+# To view the array content
+#for row in "${IANA_DB[@]}"; do
+#	echo "row: $row"
+#done
+
+## IANA_DB END
+
+#### END SECTION: DATABASES
+
+#### BEGIN SECTION: BASH FUNCTIONS
+
 printf_debug() {
-	echo -e "${white}$1${reset}"
+	printf "${white}$1${reset}\n"
 }
 
 printf_info() {
@@ -97,31 +134,37 @@ printf_inverted() {
 }
 
 is_visited_pfx() {
+	# ADD DEBUG
+	#if [ "$DEBUG" = "1" ]; then
+		printf_inverted "+DEBUG: is_visited_pfx start for $PREFIX"
+	#fi
+
 	if [ ${VISITED_PFX["$PREFIX"]} = "false" ]; then
-		if [ "$DEBUG" = "1" ]; then
-			printf_debug "DEBUG: is_visited_pfx() $PREFIX - match if VISITED_PFX[PREFIX]=false - is "${VISITED_PFX["$PREFIX"]}""
-			printf_debug "DEBUG: is_visited_pfx() $PREFIX - counter++ now"
-		fi
+		# ADD DEBUG
+		#if [ "$DEBUG" = "1" ]; then
+			printf_debug "+DEBUG: is_visited_pfx() $PREFIX - match if VISITED_PFX[PREFIX]=false - eval to: "${VISITED_PFX["$PREFIX"]}""
+			printf_debug "+DEBUG: is_visited_pfx() $PREFIX - counter++ now"
+			printf_debug "+DEBUG: is_visited_pfx() $PREFIX visited was false - now we set it to true based on *this* iteration"
+		#fi
 		((irr_prefix_count++))  # Increment the prefix counter
-	elif [ ${VISITED_PFX["$PREFIX"]} = "true" ]; then
-		if [ "$DEBUG" = "1" ]; then
-			printf_debug "DEBUG: is_visited_pfx() $PREFIX - match elif VISITED_PFX[PREFIX]=true - is "${VISITED_PFX["$PREFIX"]}""
-			printf_debug "DEBUG: is_visited_pfx() $PREFIX - match elif - do not increment"
-		fi
-		if [ "$INFO" = "1" ]; then
-			printf_info "+INFO: Already encountered $PREFIX - not incrementing unique prefix count"	
-		fi
-	fi
-	if [ ${VISITED_PFX["$PREFIX"]} != "true" ]; then
-		if [ "$DEBUG" = "1" ]; then
-			printf_debug "DEBUG: is_visited_pfx() - $PREFIX - VISITED_PFX[PREFIX] != true now - setting VISITED_PFX[PREFIX]=true"
-		fi
 		VISITED_PFX["$PREFIX"]=true
+	elif [ ${VISITED_PFX["$PREFIX"]} = "true" ]; then
+		# ADD DEBUG
+		#if [ "$DEBUG" = "1" ]; then
+			printf_debug "+DEBUG: is_visited_pfx() $PREFIX - match elif VISITED_PFX[PREFIX]=true - eval to "${VISITED_PFX["$PREFIX"]}""
+			printf_debug "+DEBUG: is_visited_pfx() $PREFIX - match elif - do not increment counter"
+		#fi
+		if [ "$INFO" = "1" ]; then
+			printf_info "+INFO: is_visited_pfx(): Already encountered $PREFIX - not incrementing unique prefix count"	
+		fi
 	fi
-	if [ "$DEBUG" = "1" ]; then
-		printf_debug "DEBUG: is_visited_pfx() $PREFIX - VISITED_PFX[PREFIX] "${VISITED_PFX["$PREFIX"]}""
-		printf_debug "DEBUG: is_visited_pfx() $PREFIX - irr_prefix_count: "$irr_prefix_count""
-	fi
+
+	# ADD DEBUG
+	#if [ "$DEBUG" = "1" ]; then
+		printf_debug "+DEBUG: is_visited_pfx() $PREFIX - irr_prefix_count: "$irr_prefix_count""
+		printf_inverted "+DEBUG: is_visited_pfx end for $PREFIX"
+		printf "\n"
+	#fi
 }
 
 conditional_supression() {
@@ -148,13 +191,14 @@ is_mask_le_24_warning() {
 	fi
 }
 
-# Suck in the bogons db (once; no sense in doing it every time check_bogons() is called)
-BOGONDB=()
-while IFS= read -r bogondb_line; do
-    BOGONDB+=("$bogondb_line")
-done < "bogon-bn-nonagg.txt"
-
 check_bogons() {
+	# ADD DEBUG
+	#if [ "$DEBUG" = "1" =; then
+		printf_inverted "+DEBUG: check_bogons() start for $PREFIX"
+	#fi
+	# First, unset IS_BOGON from previous run, if any
+	unset IS_BOGON
+
     ## There's some convoluted bitwise and hex value handling in this function.
     ## Blame MS Visual Studio Code, it complained mightily about the first 4 ways I wrote this
     ## and broke syntax highlighting through the rest of the script. Sorry. :(
@@ -189,90 +233,64 @@ check_bogons() {
 
         # Check if the prefix falls within a bogon range
         if (( (base_dec & mask) == (bogon_dec & mask) )); then
-            bogon_match=1  
-			IS_BOGON=1
+			IS_BOGON=1		# Is bogon
             break 
         elif (( (base_dec & mask) != (bogon_dec & mask) )); then
-            IS_BOGON=0
+            IS_BOGON=0		# Is NOT bogon
         else
             printf_inverted "ERROR: check_bogons() else - corner case encountered for $PREFIX"
 			exit 1
         fi
     done
-
-    if ((bogon_match == 1)); then
-		IS_BOGON=1	# Bogon
-    else
-        IS_BOGON=0	# Not bogon
-    fi
+	if [ "$INFO" = "1" ]; then
+		if [ "$IS_BOGON" = "0" ]; then
+			printf_info "+INFO: Not part of known bogon space"
+		elif [ "$IS_BOGON" = "1"  ]; then
+			printf_warn "+WARNING: $PREFIX is within bogon space and route: $PREFIX should not be found in IRR"
+		else
+			printf_debug "+ERROR: Bogon status evaluation has failed!"
+		fi
+	fi
+	# ADD DEBUG
+	#if [ "DEBUG" = "1" ]; then
+		printf_inverted "+DEBUG: check_bogons() end for $PREFIX\n"
+	#fi
 }
 
-# Suck in the IANA IPv4 csv (once; no sense in doing it every time find_rir() is called)
-# Initialize the IANA_DB array to store the processed records
-IANA_DB=()
-
-# Define the variable for holding the current record
-iana_line=""
-
-# Read the IANA IPv4 CSV
-while IFS=, read -r iana_prefix _ _ iana_whois _ iana_rdap iana_status _; do
-    # Skip the header row
-    if [[ $iana_prefix == "Prefix" ]]; then
-        continue
-    fi
-
-    # Skip the line if the prefix doesn't match the valid /8 prefix regex (0.0.0.0/8 to 255.0.0.0/8)
-	if [[ ! "$iana_prefix" =~ ^([0-9]{1,3})/8$ ]]; then
-        continue
-    fi
-
-    # Check if the RDAP field contains a multi-line value
-    # We assume that multi-line fields (RDAP) start with a URL (http:// or https://)
-    if [[ "$iana_rdap" =~ ^http(s)?:// ]]; then
-        # If the RDAP field is multi-line, we append the next line until we find the full URL
-        # Read the next line to check if it's part of the multi-line RDAP URL
-        read -r next_iana_prefix _ _ _ _ next_iana_rdap _ _ 
-        iana_rdap="$iana_rdap $next_iana_rdap"
-    fi
-
-    # Handle cases where there may be other multi-line fields, like Status
-    # Here, we'll append the next line if necessary, but we only do it if `iana_status` is empty
-    if [[ -z "$iana_status" && -n "$iana_note" ]]; then
-        iana_status="$iana_note"
-        iana_note=""
-    fi
-
-    # Process the current row and store it in the IANA_DB array, using pipes as the delimiter
-    IANA_DB+=("$iana_prefix|$iana_status|$iana_whois")
-
-done < "IANA-ipv4-address-space.csv"
-
-# After the loop ends, process the last record if any
-if [[ -n "$iana_line" ]]; then
-    IFS='|' read -r last_iana_prefix last_iana_designation last_iana_status last_iana_rdap <<< "$iana_line"
-    IANA_DB+=("$last_iana_prefix|$last_iana_designation|$last_iana_status|$iana_rdap")
-fi
-
 rir_query() {
-	printf_inverted "rir_query() start"
+	# ADD DEBUG
+	#if [ "$DEBUG" = "1" ]; then
+		printf_inverted "+DEBUG: rir_query() start for $PREFIX"
+	#fi
+
+	# Get first octet from prefix
 	IANA_SLASH8="$(echo "$PREFIX" | cut -d '.' -f1)/8"
+	# ADD DEBUG
+	#if [ "$DEBUG" = "1" ]; then
+	printf_debug "+DEBUG:  IANA_SLASH8: [$IANA_SLASH8]"
+	#fi
+
     for line in "${IANA_DB[@]}"; do
         # Split the entry into individual components
-        IFS='|' read -r iana_prefix iana_designation iana_status iana_whois <<< "$line"
-
-		# Check if the current entry matches the IANA_SLASH8
+        IFS='|' read -r iana_prefix iana_designation iana_whois iana_status <<< "$line"
+		# Check if the current entry matches the IANA_SLASH8.  If it does:
         if [[ $iana_prefix == "$IANA_SLASH8" ]]; then
+			# ADD DEBUG
+			#if [ "$DEBUG" = "1" ]; then
+				printf_debug "+DEBUG: iana_prefix: [$iana_prefix] == IANA_SLASH8: [$IANA_SLASH8]"
+				printf_debug "+DEBUG: iana_status: [$iana_status]"
+				printf_debug "+DEBUG: iana_whois: [$iana_whois]"
+			#fi
             # If the status is RESERVED, set IS_BOGON=1 and exit immediately
             if [[ $iana_status == "RESERVED" ]]; then
                 printf_inverted "rir_query() IANA status=RESERVED - is bogon"
 				IS_BOGON=1
                 break
-		else
-			printf_debug "iana_prefix: $iana_prefix not match iana_slash8: $IANA_SLASH8"
-            fi
+			fi
 
-            # If the status is ALLOCATED or LEGACY, evaluate iana_whois
+            # If not a bogon, eval status for ALLOCATED or LEGACY
             if [[ $iana_status == "ALLOCATED" || $iana_status == "LEGACY" ]]; then
+			# If status matches, look at iana_whois to set the appropriate RIR
                 if [[ $iana_whois == *"apnic"* ]]; then
                     RIR="APNIC"
 					printf_inverted "rir_query() match RIR=$RIR"
@@ -310,9 +328,51 @@ rir_query() {
 	#		ARIN_ORG_REF="arin_no_match_found"
 	#	fi
 	#fi
+	printf_info "+INFO: rir_query() RIR: $RIR"
+	# ADD DEBUG
+	#if [ "$DEBUG" = "1" ]; then
+		printf_inverted "+DEBUG: rir_query() end for $PREFIX"
+	#fi
 }
 
-info_output() {
+do_output() {
+	# ADD DEBUG
+	#if [ "$DEBUG" = "1" ]; then
+		printf_inverted "+DEBUG: do_output() start"
+	#fi
+	
+	if [ "$INFO" = "1" ]; then			# Print header for INFO
+	    	printf_info "INFO: Recursing as-set: ["$AS_SET"] mnt-by: ["${ASS_MNT_ARRAY[0]}"] source: ["${ASS_SRC_ARRAY[0]}"]"
+	fi
+	if [ "$INFO_CHAIN" = "1" ]; then	# Print header for INFO_CHAIN
+		printf "\n"
+		printf "$PREFIX (enumerated from "${AS_SET_STACK[@]}"->$MEMBER)"
+		printf "\n"
+	elif [ "$WARNING" = "1" ]; then		# Print header for WARNING
+		printf "\n$PREFIX\n"
+	else								# Normal output when INFO|INFO_CHAIN|WARNING are false
+		if [ "$PREFIX" == "$OUTPUT_PREFIX" ]; then
+			break
+		else
+			OUTPUT_PREFIX=$(echo "$KVP" | awk '{print $1}')	
+			printf "\n$PREFIX\n"
+		fi
+	fi
+
+	if [ "$INFO" = "1" ]; then
+		printf_info "+INFO: Prefix length: $CIDRMASK"
+	fi
+	printf_debug "+DEBUG: do_output() calling route_qty_check()"
+	route_qty_check
+	printf_debug "+DEBUG: do_output() calling route_mntby_autnum_mntby_check()"
+	route_mntby_autnum_mntby_check
+	printf_debug "+DEBUG: do_output() calling is_visited_pfx()"
+	is_visited_pfx	
+	printf_debug "+DEBUG: do_output() calling check_bogons()"
+	check_bogons
+	printf_debug "+DEBUG: do_output() calling rir_query()"
+	rir_query
+
 	if [ "$PFX_MATCH" = "c0" ]; then 
         # CHANGE TO DEBUG
         if [ "$INFO" = "1" ]; then
@@ -374,47 +434,79 @@ info_output() {
         printf_debug "DEBUG: $PREFIX unset PFX_MATCH (was: "$PFX_MATCH")"
 	fi                                                      
 	unset PFX_MATCH
+	# ADD DEBUG
+	#if [ "$DEBUG" = "1" ]; then
+		printf_inverted "DEBUG: do_output() end"
+		## REMOVE THIS NEWLINE
+		printf "\n"
+	#fi
 }
 
 route_qty_check () {
-	#printf_debug "DEBUG: route_qty_check()> count ROUTE_QTY[@]: ["${#ROUTE_QTY[@]}"]"
+	# ADD DEBUG
+	#if [ "$DEBUG" = "1" ]; then
+		printf_inverted "+DEBUG: route_qty_check() start for $PREFIX"
+	#fi
 	if [ "$INFO" = "1" ]; then
-			printf_info "+INFO: Found ["${#ROUTE_QTY[@]}"] route objects in IRR. 1 is the optimal quantity."
-			#printf_debug "DEBUG: ROUTE_QTY count "${#ROUTE_QTY[@]}""
-			#printf_debug "DEBUG: {ROUTE_QTY[@]} = ${ROUTE_QTY[@]}"
-			#printf_debug "DEBUG: {ROUTE_QTY[*]} = ${ROUTE_QTY[*]}"
+			printf_info "+INFO: Found "${#ROUTE_QTY[@]}" [route: $PREFIX] object(s) in IRR. 1 is the optimal quantity"
 	fi
-	if [[ ${#ROUTE_QTY[@]} -gt 1 ]]; then
+	if [[ ${#ROUTE_QTY[@]} -eq 1 ]]; then
 		if [ "$INFO" = "1" ]; then
-			printf_info "+INFO: >1 objects exist in IRR for route: $PREFIX"
+			for i in "${!ROUTE_QTY[@]}"; do
+					printf_info "+INFO:  ["$i"] route: $PREFIX source: "${ROUTE_SRC["$i"]}" mnt-by: "${ROUTE_MNT["$i"]}" origin: "${ROUTE_ORIGIN["$i"]}""
+			done	
+		fi
+	elif [[ ${#ROUTE_QTY[@]} -gt 1 ]]; then
+		if [ "$INFO" = "1" ]; then
+			printf_info "+++INFO: >1 objects exist in IRR for route: $PREFIX"
 		fi
 		for i in "${!ROUTE_QTY[@]}"; do
 			if [ "${ROUTE_MNT["$i"]}" == "MAINT-AS20473" ] && [ "${ROUTE_SRC["$i"]}" = "RADB" ]; then
 				break
 				if [ "$INFO" = "1" ]; then
-					printf_info "+INFO: Suppressing >1 route warning because it's Vultr in RADB, and that's just how they do things :("
+					printf_info "+++INFO: Suppressed >1 route warning because it's Vultr in RADB, and that's just how they do things :("
 				fi
 			elif [[ "$PREFIX" =~ ^44\. ]]; then
 				break
 				if [ "$INFO" = "1" ]; then
-					printf_info "+INFO: Suppressing >1 route warning because prefix is 44net. As such, almost always needs a proxy reg"
+					printf_info "+++INFO: Suppressed >1 route warning because prefix is 44net. As such, almost always needs a proxy reg"
 				fi
 			else
 				if [ "$INFO" = "1" ]; then
-					printf_info "+INFO:   ["$i"] route: $PREFIX source: "${ROUTE_SRC["$i"]}" mnt-by: "${ROUTE_MNT["$i"]}" origin: "${ROUTE_ORIGIN["$i"]}""
+					printf_info "+++INFO:   ["$i"] route: $PREFIX source: "${ROUTE_SRC["$i"]}" mnt-by: "${ROUTE_MNT["$i"]}" origin: "${ROUTE_ORIGIN["$i"]}""
 				fi
 			fi
 		done
 	fi
+	# ADD DEBUG
+	#if [ "$DEBUG" = "1" ]; then
+		printf_inverted "+DEBUG: route_qty_check() end for $PREFIX\n"
+	#fi
 }
 
 route_origin_irr_check() {
+	# ADD DEBUG
+	#if [ "$DEBUG" = "1" ]; then
+		printf_inverted "+DEBUG: route_origin_irr_check() start for $PREFIX"
+		printf_debug "+DEBUG: route_origin_irr_check() count elements in {#ROUTE_ORIGIN[@]}: ${#ROUTE_ORIGIN[@]}"
+	#fi
 	# if more than one origin: exists in multiple IRR objects
 	if [[ ${#ROUTE_ORIGIN[@]} -gt 1 ]]; then
+		if [ "$DEBUG" = "1" ]; then
+			printf_debug "+DEBUG: route_origin_irr_check() VAR{#ROUTE_ORIGIN[@]} -gt 1 if match"
+		fi
 		for i in "${ROUTE_ORIGIN[@]}" ; do
 			if [[ "$i" = ${ROUTE_ORIGIN[0]} ]]; then
+				# ADD DEBUG
+				#if [ "$DEBUG" = "1" ]; then
+					printf_debug "+DEBUG: route_origin_irr_check() [for i loop] $i in {ROUTE_ORIGIN[@]} = {ROUTE_ORIGIN[0] if match"
+				#fi
 				ALL_SAME_ORIGIN=true
 			else
+				# ADD DEBUG
+				#if [ "$DEBUG" = "1" ]; then
+					printf_debug "+DEBUG: route_origin_irr_check() [for i loop] $i in {ROUTE_ORIGIN[@]} = {ROUTE_ORIGIN[0] if ELSE"
+				#fi
 				ALL_SAME_ORIGIN=false
 				break
 			fi
@@ -456,7 +548,30 @@ route_origin_irr_check() {
 				printf_warn "+WARNING:  before you delete route: "$PREFIX" with origin: "${ROUTE_ORIGIN["$i"]}" from IRR"
 		fi
 	fi
+	# ADD DEBUG
+	printf_inverted "route_origin_irr_check() end"
 }
+
+route_mntby_autnum_mntby_check() {
+	# ADD DEBUG
+	#if [ "$DEBUG" = "1" ]; then
+		printf_inverted "+DEBUG: route_mntby_autnum_mntby_check() start for $PREFIX"
+	#fi
+	if [ "$ROUTE_MNT" = "$AUT_MNT" ]; then 
+		if [ "$INFO" = "1" ]; then
+			printf_info "+INFO: route: mnt-by $ROUTE_MNT and aut-num: mnt-by $AUT_MNT match!"
+		fi
+	else
+		printf_warn "+WARNING: route: mnt-by $ROUTE_MNT DOES NOT MATCH aut-num: mnt-by $AUT_MNT"
+		printf_warn "+WARNING: Potential error in IRR data for route: $PREFIX"
+	fi
+	# ADD DEBUG
+	#if [ "$DEBUG" = "1" ]; then
+		printf_inverted "+DEBUG: route_mntby_autnum_mntby_check() end for $PREFIX\n"
+	#fi
+}	
+
+#### END SECTION: BASH FUNCTIONS
 
 ## defaults for input variables
 SOURCE="NTTCOM"
@@ -819,11 +934,6 @@ process_as_sets() {
 			    fi
 		    done
 	    printf "\n"
-    elif [ "$ASS_EXISTS_COUNT" -eq 1 ]; then	# as things should be - only one as-set object seen
-		if [ "$INFO" = "1" ]; then
-			printf "\n"
-	    	printf "${yellow}Recursing as-set: ["$AS_SET"] mnt-by: ["${ASS_MNT_ARRAY[0]}"] source: ["${ASS_SRC_ARRAY[0]}"]${reset}\n"
-		fi
     fi
 
     # reset the trip odometer on ASS_EXISTS_COUNT 
@@ -1004,31 +1114,8 @@ process_as_sets() {
 					# Count the number of route: objects found in IRR
 					IFS=' ' read -r -a ROUTE_QTY <<< $(echo -e "$ROUTE_IRR_OUT" | grep -e "^route:\|^source:" | awk '/^route:/ {route=$0} /^source:/ {source=$0; if (source !~ /RPKI/) {print route} route=""; source=""}' | awk '{print $1}' | tr '\n' ' ')
 
-					# See if the prefix is within bogon territory
-					# But first, unset IS_BOGON from any previous invocation of check_bogons()
-					unset IS_BOGON
-					check_bogons
-					
-					# WIP Determine which RIR covers the prefix
-					# WIP iana_function
-					
-					
 					# Parse origins from ROUTE_IRR_OUT
 					IFS=' '  read -r -a ROUTE_ORIGIN <<< $(echo -e "$ROUTE_IRR_OUT" | awk 'BEGIN {IGNORECASE=1} /^origin:/ {print $2}' | tr '\n' ' ') 
-					
-					# Parse OriginAS: from RIR whois
-					ARIN_ORIGIN=$(whois -h whois.arin.net "r = $PREFIX" | grep "^OriginAS:" | awk '{print $2}')
-					
-					#AFRINIC
-					#ARIN
-					#APNIC
-					#LACNIC
-					#RIPE
-
-					if [ -n "$ARIN_ORIGIN" ]; then
-						RIR_ORIGIN="$ARIN_ORIGIN"
-						RIR="ARIN"
-					fi
 					
 					# Parse maintainers from ROUTE_IRR_OUT
 					IFS=' ' read -r -a ROUTE_MNT <<< $(echo -e "$ROUTE_IRR_OUT" | awk 'BEGIN {IGNORECASE=1} /^mnt-by:/ {print $2}' | tr '\n' ' ')
@@ -1165,66 +1252,11 @@ process_as_sets() {
 								continue
 							elif [ "${VISITED_PFX["$PREFIX"]}" = "false" ]; then 
 								CIDRMASK="${PREFIX##*/}"
-								if [ "$INFO_CHAIN" = "1" ]; then
-									printf "\n$PREFIX\n"
-									echo "${AS_SET_STACK[@]} $MEMBER"
-								elif [ "$INFO" = "1" ]; then
-									printf "\n$PREFIX\n"
-									printf_info "+INFO: Prefix length: $CIDRMASK"
-									if [ "$IS_BOGON" = "0" ]; then
-										printf_info "+INFO: Not part of known bogon space"
-									fi
-									# WIP query the return of IS_BOGON
-									printf_info "+INFO: RIR: "$RIR""
-									printf_info "+INFO: Found ARIN OrgID: "$ARIN_ORG_ID""
-									printf_info "+INFO: Found ARIN OrgID RDAP Ref: "$ARIN_ORG_REF""
-									printf_info "+INFO: Found ARIN autnum: $ARIN_ORG_AUTNUM for OrgId: $ARIN_ORG_ID"
-								elif [ "$WARNING" = "1" ]; then
-									printf "\n$PREFIX\n"
-								else
-									if [ "$PREFIX" == "$OUTPUT_PREFIX" ]; then
-										break
-									else
-										printf "$PREFIX\n"
-										OUTPUT_PREFIX=$(echo "$KVP" | awk '{print $1}')
-									fi
-								fi
-								if [ -z "$RIR_ORIGIN" ]; then
-									RIR_FOUND="false"
-									if [ "$INFO" = "1" ]; then
-										printf_info "+INFO: Unable to determine origin AS for $PREFIX from RIR! Assumed to be $MEMBER"
-									fi
-									if [ "$INFO" = "1" ]; then
-										printf_info "+INFO: RIR OriginAS: [notfound]"
-										printf_info "+INFO: Assuming route origin is $MEMBER (due to member: $MEMBER in AS-SET)"
-									fi
-									RIR_ORIGIN="$MEMBER"
-								elif [ "$RIR_ORIGIN" = "$ARIN_ORIGIN" ]; then
-									RIR_FOUND="true"
-									if [ "$INFO" = "1" ]; then
-										printf_info "+INFO: RIR_ORIGIN known from ARIN_ORIGIN: $RIR_ORIGIN"
-									fi
-								elif [ "$RIR_ORIGIN" = "$MEMBER" ]; then
-									RIR_FOUND="true"
-									#printf_debug "DEBUG: 882 elif 0 RIR_FOUND: $RIR_FOUND"
-									if [ "$INFO" = "1" ]; then
-										printf_info "+INFO: RIR_ORIGIN already set because prefix already seen"
-									fi
-								else
-									RIR_FOUND="true"
-									if [ "$INFO" = "1" ]; then
-										printf_info "+INFO: RIR OriginAS: $RIR_ORIGIN"
-									fi
-								fi
-								if [ "$ROUTE_MNT" = "$AUT_MNT" ]; then 
-									if [ "$INFO" = "1" ]; then
-										printf_info "+INFO: route: mnt-by $ROUTE_MNT and aut-num: mnt-by $AUT_MNT match!"
-									fi
-								fi
-								route_qty_check
+								
+								do_output
+								#route_qty_check - moved to do_output()
+								#route_mntby_autnum_mntby_check - moved to do_output()
 
-								## Tag this prefix (the prefix/route:, not the prefix+src KVP) visited
-								#VISITED_PFX[$PREFIX]=true
 								# Now determine which scenario matches the data parsed
 
 								if [ "$RIR_ORIGIN" != "$ROUTE_ORIGIN" ]; then	# Found RIR origin but mismatch with route origin - case 4
@@ -1243,11 +1275,10 @@ process_as_sets() {
 									printf_debug "no case matched for prefix $PREFIX"
 								fi
 
-								is_visited_pfx
-								# WIP - busted
-								#rir_query
-								check_bogons
-								info_output
+								#is_visited_pfx - moved
+								# WIP 
+								#moved check_bogons
+								#movedrir_query
 								route_origin_irr_check
 								is_mask_le_24_warning
 
@@ -1257,10 +1288,10 @@ process_as_sets() {
 							fi
 						done	# end for o
 						if [ "$DEBUG" = "1" ]; then
-                                               	printf_debug "DEBUG: end of in for i loop for "[$PREFIX]" + ["$ROUTE_SRC"]"
-						printf_debug "DEBUG: VISITED_PFX_SRC[KVP]: ["$VISITED_PFX_SRC[$KVP]"]"
-					fi
-				 fi
+                            printf_debug "DEBUG: end of in for i loop for "[$PREFIX]" + ["$ROUTE_SRC"]"
+							printf_debug "DEBUG: VISITED_PFX_SRC[KVP]: ["$VISITED_PFX_SRC[$KVP]"]"
+						fi
+				fi
 		 	done	# end for i
 			if [ "$DEBUG" = "1" ]; then
 				printf_debug "DEBUG: for i in ROUTE_SRC loop ended"

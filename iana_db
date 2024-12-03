@@ -1,0 +1,22 @@
+## IANA_DB START
+
+# Initialize the IANA_DB array to store the processed records
+IANA_DB=()
+IANA_SRC_FILE="ipv4-address-space.txt"
+
+    while IFS= read -r line; do
+        iana_prefix=$(echo "$line" | cut -c4-9 | sed 's/^0\{1,2\}//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//') 
+        iana_designation=$(echo "$line" | cut -c11-45 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//') 
+        iana_whois=$(echo "$line" | cut -c53-71 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')  
+        iana_status=$(echo "$line" | cut -c103-113 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')  
+        row="$(printf "%-10s %-45s %-25s %-15s\n" "$iana_prefix" "$iana_designation" "$iana_whois" "$iana_status")"
+        # Append the formatted string to the array
+        IANA_DB+=("$row")
+	done < "$IANA_SRC_FILE"
+
+# To view the array content
+for row in "${IANA_DB[@]}"; do
+	echo "row: $row"
+done
+
+## IANA_DB END
