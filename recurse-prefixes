@@ -640,6 +640,7 @@ else
         printf_debug "DEBUG: grep found: [$GREP]"
     fi
 fi
+
 AWK=$(command -v awk)
 if [ "$DEBUG" = "1" ]; then
     printf_debug "DEBUG: checking command -v awk"
@@ -651,6 +652,7 @@ else
         printf_debug "DEBUG: awk found: [$AWK]"
     fi
 fi
+
 TR=$(command -v tr)
 if [ "$DEBUG" = "1" ]; then
     printf_debug "DEBUG: checking command -v tr"
@@ -662,6 +664,7 @@ else
         printf_debug "DEBUG: tr found: [$TR]"
     fi
 fi
+
 TAIL=$(command -v tail)
 if [ "$DEBUG" = "1" ]; then
     printf_debug "DEBUG: checking command -v tail"
@@ -689,6 +692,7 @@ fi
 if [ "$DEBUG" = "1" ]; then
     printf_debug "DEBUG: checking command -v whois"
 fi
+
 WHOIS=$(command -v whois)
 if [ -z "$WHOIS" ]; then
     echo "ERROR: no command found for whois. Please check your path." && exit 1
@@ -716,6 +720,19 @@ if [ "$UNAME" = "Darwin" ]; then
 	if [ "$DEBUG" = "1" ]; then
                 printf_debug "DEBUG: whois found: [$WHOIS]"
         fi
+    fi
+fi
+
+MLR=$(command -v mlr)
+if [ "$DEBUG" = "1" ]; then
+    printf_debug "DEBUG: checking command -v mlr"
+fi
+if [ -z "$MLR" ]; then
+    echo "ERROR: no command found for mlr. Please check your path or install as required." 
+    echo "       See https://miller.readthedocs.io/en/6.13.0/installing-miller/ " && exit 1
+else
+    if [ "$DEBUG" = "1" ]; then
+        printf_debug "DEBUG: mlr found: [$MLR]"
     fi
 fi
 
