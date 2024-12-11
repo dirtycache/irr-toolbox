@@ -214,7 +214,7 @@ is_mask_le_24_warning() {
 		printf_inverted "+DEBUG: is_mask_le_24_warning() start for $PREFIX"
 	fi
 	if (( CIDRMASK > 24 )) && [ "$WARNING" = "1" ]; then
-		printf_warning "+WARNING: Mask length >24.  This will not be accepted in global tables and may be inappropriate in filter lists!"
+		printf_warn "+WARNING: Mask length >24.  This will not be accepted in global tables and may be inappropriate in filter lists!"
 	elif [ "$INFO" = "1" ]; then
 		printf_info "+INFO: Prefix length $CIDRMASK acceptable for global BGP" 
 	fi
@@ -345,7 +345,7 @@ rir_query() {
 					RIR="RIR-ERROR-NO-MATCH-FOUND"
                 fi
 			else
-				printf_warning "+ERROR: rir_query() no iana_status match"
+				printf_warn "+ERROR: rir_query() no iana_status match"
             fi
 			
             # Exit loop after evaluating the matching line
