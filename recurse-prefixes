@@ -14,7 +14,9 @@
 ##  [https://irrexplorer.nlnog.net]
 ##  [https://github.com/nlnog/irrexplorer]
 ##
-## Daniel Austin MBCS (https://www.dan.me.uk/filtergen)
+## Daniel Austin MBCS for (https://www.dan.me.uk/filtergen)
+##
+## Job Snijders for his excellent aggregate6 script (https://github.com/job/aggregate6)
 ##
 ## Special thanks to Ken Kresha and the rest of the AS2914 crew for igniting my IRR knowledge and
 ## curiosity, way back a million years ago in the Y2K!
@@ -29,9 +31,9 @@ usage() {
     echo "Recurse a given as-set object through member aut-nums and member as-sets which themselves contain."
     echo "aut-nums, until the end-of-recursion aut-num is reached. Query aut-num objects for originated prefixes."
     echo " "
-	echo "Uses ANSI colors by default.  Suggested terminal width is >=120 columns"
+	echo "Uses ANSI colors.  Suggested terminal width is >=120 columns"
 	echo " "
-    echo "Usage: $0 <as_set_name|aut-num> [-m|--mnt <mnt-by> -s|--source <irr_source> <as_set_name> [-i|--info -w|--warning --debug -h|--help]"
+    echo "Usage: $0 <as_set_name|aut-num> [-m|--mnt <mnt-by> -s|--source <irr_source> <as_set_name> [-i|--info -w|--warning|--agg|--debug -h|--help]"
     echo " "
     printf "%-30s %-80s \n" "<as_set_name|aut-num>" "The IRR object you wish to enumerate"
     printf "%-30s %-80s \n" "-c|--chain" "Output IRR data relative to each prefix, e.g., as-set recusion until aut-num for origin"
@@ -45,6 +47,10 @@ usage() {
     printf "%-30s %-80s \n" "-i|--info"	"Output verbose extra information about the enumerated route objects from the as-set"
     printf "%-30s %-80s \n" "" "Implicitly sets -w|--warning"
     printf "%-30s %-80s \n" "-w|--warning"	"See warnings about possible IRR data issues (without extra output of -i|--info)"
+    printf "%-30s %-80s \n" "--agg"	"Do not output the raw prefix list from the as-set."
+	printf "%-30s %-80s \n" "" "Instead, run it though aggregate6 for prefix aggregation first"
+    printf "%-30s %-80s \n" "" "Requires python3 venv and will create one in ./.venv_irr-toolbox"
+    printf "%-30s %-80s \n" "" "Do not use this flag in modes other than normal output - that is, cannot combine with -i|-w|-c"
     printf "%-30s %-80s \n" "--debug" "Enable script execution debugging - there is a prodigious amount"
     printf "%-30s %-80s \n" "" "of output; use judiciously and don't say we didn't warn you."
     printf "%-30s %-80s \n" "" "Implicitly sets -i|--info and -w|--warning"
@@ -358,40 +364,214 @@ rir_query() {
         fi
     done
 	if [ "$INFO" = "1" ]; then
-		printf_info "+INFO: Found IPv4 RIR: $RIR"
+		printf_info "+INFO: Found IPv4 (IANA specified) RIR: $RIR"
 	fi
 
 	# query the identified RIR
-	if [ "$RIR" = "ARIN" ]; then
-		# NetHandle
-		ARIN_NET_HANDLE=$(whois -h whois.arin.net "r = $PREFIX" | awk '/^NetHandle:/ {print $2}')
-		if [ -z "$ARIN_NET_HANDLE" ]; then
-			ARIN_NET_HANDLE="arin_no_nethandle_found"
+
+### START OF LEGACY SANITY CHECK
+	# First, check for LEGACY because if so IANA may be wrong and we have to check things manually
+	if [ "$iana_status" == "LEGACY" ]; then
+		if [ "$INFO" = "1" ]; then
+			printf_info_bold "+INFO: IANA LEGACY status, so RIR: $RIR could be a lie. Have to check the other registries now"
 		fi
-		# NetName
-		ARIN_NET_NAME=$(whois -h whois.arin.net "r = $PREFIX" | awk '/^NetName:/ {print $2}')
-		if [ -z "$ARIN_NET_NAME" ]; then
-			ARIN_NET_NAME="arin_no_netname_found"
+
+		# ADD DEBUG 
+		if [ "$DEBUG" = "1" ]; then
+		 	printf_debug "DEBUG: rir_query() iana_status=LEGACY matched - unset FoundTheMonkeys"
 		fi
-		# OrgId
-		ARIN_ORG_ID=$(whois -h whois.arin.net "r = $PREFIX" | awk '/^OrgId:/ {print $2}')
-		if [ -z "$ARIN_ORG_ID" ]; then
-			ARIN_ORG_ID="arin_no_orgid_found"
+		unset FoundTheMonkeys
+
+		# Query all the fuckin' RIR whois I guess...
+		RIPE_netname=$(whois -h whois.ripe.net $PREFIX | awk '/^netname:/ { $1=""; print substr($0, 2) }')
+
+		# LEGACY AFRINIC
+		if [ "$DEBUG" = "1" ]; then
+			printf_debug "+DEBUG: whois AFRINIC $PREFIX"
+			printf_debug "+DEBUG: AFRINIC_inetnum: $AFRINIC_inetnum"
 		fi
-		# OriginAS
-		ARIN_ORIGINAS=$(whois -h whois.arin.net "r = $PREFIX" | awk '/^OriginAS:/ {print $2}') 
-		if [ -z "$ARIN_ORIGINAS" ]; then
-			ARIN_ORIGINAS="arin_no_originas_found"
-			if [ "$INFO" = "1" ]; then
-				printf_info_bold "+INFO: Cannot determine origin AS from RIR. Assuming $MEMBER"
-			fi
-			# Set to member if we can't parse it from RIR
-			RIR_ORIGIN=$MEMBER
+		AFRINIC_inetnum=$(whois -h whois.afrinic.net $PREFIX | awk '/^inetnum:/ { $1=""; print substr($0, 2) }')
+		if [ "$AFRINIC_inetnum" == "0.0.0.0 - 255.255.255.255" ]; then
+			FoundTheMonkeys=0
+			# ADD DEBUG
+			#if [ "$DEBUG" = "1" ]; then
+				printf_debug "+DEBUG: Received not-my-monkeys from AFRINIC"
+			#fi
 		else
-			if [ "$DEBUG" = "1" ]; then
-				printf_debug "+DEBUG: ARIN OriginAS found in whois. Setting RIR_ORIGIN from ARIN_ORIGINAS"
+			FoundTheMonkeys=1
+			# ADD DEBUG
+			#if [ "$DEBUG" = "1" ]; then
+				printf_debug "DEBUG: Received is-my-monkeys from AFRINIC"
+			#fi
+		fi
+		unset AFRINIC_inetnum
+
+		# LEGACY ARIN
+		if [ "$FoundTheMonkeys" = "0" ]; then
+			baseNet=${PREFIX%%/*}
+			#ARIN_NetType=$(whois -h whois.arin.net $PREFIX | awk '/^NetType:/ { $1=""; print substr($0, 2) }')
+			ARIN_NetType=$(whois -h whois.arin.net $baseNet | awk '/^NetType:/ { $1=""; print substr($0, 2) }')
+			#if [ "$DEBUG" = "1" ]; then
+				printf_debug "+DEBUG whois ARIN baseNet: $baseNet"
+				printf_debug "+DEBUG: ARIN_NetType: $ARIN_NetType"
+			#fi
+			if [[ "$ARIN_NetType" == "Allocated to ARIN" || "$ARIN_NetType" == "Direct Allocation" ]]; then
+				FoundTheMonkeys=1
+				RIR="ARIN"
+				# ADD DEBUG
+				#if [ "$DEBUG" = "1" ]; then
+					printf_debug "+DEBUG: Received is-my-monkeys from ARIN"
+				#fi
+				if [ "$INFO" = "1" ]; then
+					printf_info "+INFO: IANA LEGACY: found RIR $RIR by direct whois match"
+				fi
+			else
+				FoundTheMonkeys=0
+				# ADD DEBUG
+				#if [ "$DEBUG" = "1" ]; then
+					printf_debug "+DEBUG: Received not-my-monkeys from ARIN"
+				#fi
 			fi
-			RIR_ORIGIN=$ARIN_ORIGINAS
+			unset ARIN_NetType
+		fi
+		
+		# LEGACY RIPE
+		if [ "$FoundTheMonkeys" = "0" ]; then
+			RIPE_netname=$(whois -h whois.ripe.net $PREFIX | awk '/^netname:/ { $1=""; print substr($0, 2) }')
+			# ADD DEBUG
+			if [ "$DEBUG" = "1" ]; then
+				printf_debug "+DEBUG whois RIPE $PREFIX"
+				printf_debug "+DEBUG: RIPE_netname: $RIPE_netname"
+			fi
+			if [ "$RIPE_netname" != "NON-RIPE-NCC-MANAGED-ADDRESS-BLOCK" ]; then
+				FoundTheMonkeys=1
+				RIR="RIPE"
+				# ADD DEBUG
+				#if [ "$DEBUG" = "1" ]; then
+					printf_debug "+DEBUG: Received is-my-monkeys from RIPE"
+					printf_debug "+DEBUG: RIPE_netname: $RIPE_netname"
+				#fi
+				if [ "$INFO" = "1" ]; then
+					printf_info "+INFO: IANA LEGACY: found RIR $RIR by direct whois match"
+				fi
+			else
+				FoundTheMonkeys=0
+				# ADD DEBUG
+				#if [ "$DEBUG" = "1" ]; then
+					printf_debug "+DEBUG: Received not-my-monkeys from RIPE"
+				#fi
+			fi
+			unset RIPE_netname
+		fi
+
+	# LEGACY  APNIC
+		if [ "$FoundTheMonkeys" = "0" ]; then
+			APNIC_netname=$(whois -h whois.apnic.net $PREFIX | awk '/^netname:/ { $1=""; print substr($0, 2) }')
+			# ADD DEBUG
+			if [ "$DEBUG" = "1" ]; then
+				printf_debug "+DEBUG whois APNIC $PREFIX"
+				printf_debug "+DEBUG: APNIC_netname: $APNIC_netname"
+			fi
+			if [ "$APNIC_netname" != "ERX-NETBLOCK" ]; then
+				FoundTheMonkeys=1
+				RIR="APNIC"
+				# ADD DEBUG
+				#if [ "$DEBUG" = "1" ]; then
+					printf_debug "+DEBUG: Received is-my-monkeys from APNIC"
+					printf_debug "+DEBUG: APNIC_netname: $APNIC_netname"
+				#fi
+				if [ "$INFO" = "1" ]; then
+					printf_info "+INFO: IANA LEGACY: found RIR $RIR by direct whois match"
+				fi
+			else
+				FoundTheMonkeys=0
+				# ADD DEBUG
+				#if [ "$DEBUG" = "1" ]; then
+					printf_debug "+DEBUG: Received not-my-monkeys from APNIC"
+				#fi
+			fi
+			unset APNIC_netname
+		fi
+
+
+
+		if [ "$FoundTheMonkeys" = "0" ]; then
+			printf_inverted "ERROR: FoundTheMonkeysStill is 0"
+		fi
+	# this closes if iana_status = LEGACY
+	fi
+### END OF LEGACY SANITY CHECK
+
+	if [ "$RIR" = "ARIN" ]; then
+		baseNet=${PREFIX%%/*}
+		# Parent CIDR
+		ARIN_Fetched_CIDR=$(whois -h whois.arin.net $baseNet | awk '/^CIDR:/ {print $2}')
+		# ADD DEBUG
+		#if [ "$DEBUG" = "1" ]; then
+			printf_debug "DEBUG: ARIN fetched CIDR: $ARIN_Fetched_CIDR"
+		#fi
+		if [ "$ARIN_Fetched_CIDR" != "$PREFIX" ]; then
+			if [ "$WARNING" = "1" ]; then 
+				printf_warn "+WARNING: route: $PREFIX does not match ARIN CIDR: $ARIN_Fetched_CIDR - make sure you really want to do this"
+			fi
+			if [ "$INFO" = "1" ]; then
+				printf_info "+INFO: Querying ARIN for info of covering CIDR $ARIN_Fetched_CIDR instead of $PREFIX"
+			fi
+			# NetHandle
+			ARIN_NET_HANDLE=$(whois -h whois.arin.net "r = $ARIN_Fetched_CIDR" | awk '/^NetHandle:/ {print $2}')
+			if [ -z "$ARIN_NET_HANDLE" ]; then
+				ARIN_NET_HANDLE="arin_no_nethandle_found"
+			fi
+			# NetName
+			ARIN_NET_NAME=$(whois -h whois.arin.net "r = $ARIN_Fetched_CIDR" | awk '/^NetName:/ {print $2}')
+			if [ -z "$ARIN_NET_NAME" ]; then
+				ARIN_NET_NAME="arin_no_netname_found"
+			fi
+			# OrgId
+			ARIN_ORG_ID=$(whois -h whois.arin.net "r = $ARIN_Fetched_CIDR" | awk '/^OrgId:/ {print $2}')
+			if [ -z "$ARIN_ORG_ID" ]; then
+				ARIN_ORG_ID="arin_no_orgid_found"
+			fi
+			# OriginAS
+			ARIN_ORIGINAS=$(whois -h whois.arin.net "r = $ARIN_Fetched_CIDR" | awk '/^OriginAS:/ {print $2}') 
+			if [ -z "$ARIN_ORIGINAS" ]; then
+				ARIN_ORIGINAS="arin_no_originas_found"
+				# Set to member if we can't parse it from RIR
+				RIR_ORIGIN=$MEMBER
+			else
+				if [ "$DEBUG" = "1" ]; then
+					printf_debug "+DEBUG: ARIN OriginAS found in whois. Setting RIR_ORIGIN from ARIN_ORIGINAS"
+				fi
+				RIR_ORIGIN=$ARIN_ORIGINAS
+			fi	
+		else 		## when the prefix in the route object matches the ARIN CIDR
+			# NetHandle
+			ARIN_NET_HANDLE=$(whois -h whois.arin.net "r = $PREFIX" | awk '/^NetHandle:/ {print $2}')
+			if [ -z "$ARIN_NET_HANDLE" ]; then
+				ARIN_NET_HANDLE="arin_no_nethandle_found"
+			fi
+			# NetName
+			ARIN_NET_NAME=$(whois -h whois.arin.net "r = $PREFIX" | awk '/^NetName:/ {print $2}')
+			if [ -z "$ARIN_NET_NAME" ]; then
+				ARIN_NET_NAME="arin_no_netname_found"
+			fi
+			# OrgId
+			ARIN_ORG_ID=$(whois -h whois.arin.net "r = $PREFIX" | awk '/^OrgId:/ {print $2}')
+			if [ -z "$ARIN_ORG_ID" ]; then
+				ARIN_ORG_ID="arin_no_orgid_found"
+			fi
+			# OriginAS
+			ARIN_ORIGINAS=$(whois -h whois.arin.net "r = $PREFIX" | awk '/^OriginAS:/ {print $2}') 
+			if [ -z "$ARIN_ORIGINAS" ]; then
+				ARIN_ORIGINAS="arin_no_originas_found"
+				# Set to member if we can't parse it from RIR
+				RIR_ORIGIN=$MEMBER
+			else
+				if [ "$DEBUG" = "1" ]; then
+					printf_debug "+DEBUG: ARIN OriginAS found in whois. Setting RIR_ORIGIN from ARIN_ORIGINAS"
+				fi
+				RIR_ORIGIN=$ARIN_ORIGINAS
+			fi
 		fi
 
 		if [ "$INFO" = "1" ]; then
@@ -399,14 +579,12 @@ rir_query() {
 			printf_info "+INFO: ARIN NetName: $ARIN_NET_NAME" 
 			printf_info "+INFO: ARIN OrgId: $ARIN_ORG_ID"
 			printf_info "+INFO: ARIN OriginAS: $ARIN_ORIGINAS"
+			if [ "$ARIN_ORIGINAS" = "arin_no_originas_found" ]; then
+					printf_info_bold "+INFO: Cannot determine origin AS from $RIR. Assuming $MEMBER"
+			fi
 		fi
-
-		#if [ "$RIR" = "RIPE" ]; then
-
-
 	fi
 
-	# ADD DEBUG
 	if [ "$DEBUG" = "1" ]; then
 		printf_inverted "+DEBUG: rir_query() end for $PREFIX"
 	fi
@@ -669,6 +847,7 @@ route_mntby_autnum_mntby_check() {
 SOURCE="NTTCOM"
 AS_SET="$1"
 DEBUG="0"
+AGG_OUTPUT="0"
 
 # Parse the command line options
 while [[ "$#" -gt 0 ]]; do
@@ -678,6 +857,7 @@ while [[ "$#" -gt 0 ]]; do
         -s|--source) SOURCE="$2"; shift 2;;
         -i|--info) INFO=1; shift 1;;
         -w|--warning) WARNING=1; shift 1;;
+        --agg) AGG_OUTPUT=1; shift 1;;
         --debug) DEBUG=1; shift 1;;
         -h|--help) usage;;
         --) shift; break;;  # End of options
@@ -696,7 +876,7 @@ fi
 # Ensure required options are set
 if [[ -z "$AS_SET" ]]; then
 	echo "Error: <as_set_name> is required!"
-    	usage
+    usage
 fi
 
 # Initialize variables
@@ -714,7 +894,7 @@ if (( bash_version_major < 5 )); then
 	if [ "$DEBUG" = "1" ]; then
     		printf_debug "DEBUG: bash version is < 5; check failed"
 	fi
-    echo "ERROR: bash v5 required" && exit 1
+    printf_warn "ERROR: bash v5 required" && exit 1
 else
         if [ "$DEBUG" = "1" ]; then
                 printf_debug "DEBUG: bash version not < 5; check succeeded"
@@ -726,7 +906,7 @@ if [ "$DEBUG" = "1" ]; then
     printf_debug "DEBUG: checking command -v grep"
 fi
 if [ -z "$GREP" ]; then
-    echo "ERROR: no command found for grep. Please check your path" && exit 1
+    printf_warn "ERROR: no command found for grep. Please check your path" && exit 1
 else
     if [ "$DEBUG" = "1" ]; then
         printf_debug "DEBUG: grep found: [$GREP]"
@@ -738,7 +918,7 @@ if [ "$DEBUG" = "1" ]; then
     printf_debug "DEBUG: checking command -v awk"
 fi
 if [ -z "$AWK" ]; then
-    echo "ERROR: no command found for awk. Please check your path" && exit 1
+    printf_warn "ERROR: no command found for awk. Please check your path" && exit 1
 else
     if [ "$DEBUG" = "1" ]; then
         printf_debug "DEBUG: awk found: [$AWK]"
@@ -750,7 +930,7 @@ if [ "$DEBUG" = "1" ]; then
     printf_debug "DEBUG: checking command -v tr"
 fi
 if [ -z "$TR" ]; then
-    echo "ERROR: no command found for tr. Please check your path" && exit 1
+    printf_warn "ERROR: no command found for tr. Please check your path" && exit 1
 else
     if [ "$DEBUG" = "1" ]; then
         printf_debug "DEBUG: tr found: [$TR]"
@@ -815,16 +995,15 @@ if [ "$UNAME" = "Darwin" ]; then
     fi
 fi
 
-MLR=$(command -v mlr)
+PYTHON3=$(command -v python3)
 if [ "$DEBUG" = "1" ]; then
-    printf_debug "DEBUG: checking command -v mlr"
+    printf_debug "DEBUG: checking command -v python3"
 fi
-if [ -z "$MLR" ]; then
-    echo "ERROR: no command found for mlr. Please check your path or install as required." 
-    echo "       See https://miller.readthedocs.io/en/6.13.0/installing-miller/ " && exit 1
+if [ -z "$PYTHON3" ]; then
+    echo "ERROR: no command found for python3. Please check your path or install as required." 
 else
     if [ "$DEBUG" = "1" ]; then
-        printf_debug "DEBUG: mlr found: [$MLR]"
+        printf_debug "DEBUG: python3 found: [$PYTHON3]"
     fi
 fi
 
@@ -833,7 +1012,22 @@ if [ "$DEBUG" = "1" ]; then
     printf_debug "DEBUG: AS-SET: [$AS_SET]"
     printf_debug "DEBUG: INFO: [$INFO]"
     printf_debug "DEBUG: WARNING: [$WARNING]"
+    printf_debug "DEBUG: CHAIN: [$CHAIN]"
+    printf_debug "DEBUG: AGG_OUTPUT: [$AGG_OUTPUT]"
     printf_debug "DEBUG: DEBUG: [$DEBUG]"
+fi
+
+# Bail out if -agg is used in a scenario other than default (terse) output
+if [ "$DEBUG" = "1" ]; then
+	printf_debug "DEBUG: checking sanity of -agg flag with -i|-w|-c"
+fi
+if [[ "$AGG_OUTPUT" = "1" && ( "$INFO" = "1" || "$INFO_CHAIN" = "1" || "$WARNING" = "1" ) ]]; then
+	if [ "$DEBUG" = "1" ]; then
+		printf_debug "DEBUG: sanity of -agg flag with -i|-w|-c is insane. Bailing out!"
+	fi
+	printf "\n"
+	printf_warn "ERROR: cannot use -i|-c|-w concurrent with --agg"
+	usage
 fi
 
 # Declare the 5 RIRs and their whois servers
