@@ -506,10 +506,9 @@ rir_query() {
 		baseNet=${PREFIX%%/*}
 		# Parent CIDR
 		ARIN_Fetched_CIDR=$(whois -h whois.arin.net $baseNet | awk '/^CIDR:/ {print $2}')
-		# ADD DEBUG
-		#if [ "$DEBUG" = "1" ]; then
-			printf_debug "DEBUG: ARIN fetched CIDR: $ARIN_Fetched_CIDR"
-		#fi
+		if [ "$INFO" = "1" ]; then
+			printf_info "+INFO: ARIN query fetched CIDR: $ARIN_Fetched_CIDR"
+		fi
 		if [ "$ARIN_Fetched_CIDR" != "$PREFIX" ]; then
 			if [ "$WARNING" = "1" ]; then 
 				printf_warn "+WARNING: route: $PREFIX does not match ARIN CIDR: $ARIN_Fetched_CIDR - make sure you really want to do this"
@@ -604,94 +603,67 @@ do_output() {
 	elif [ "$WARNING" = "1" ]; then		# Print header for WARNING
 		printf "\n$PREFIX\n"
 	else								# Normal output when INFO|INFO_CHAIN|WARNING are false
-		if [ "$PREFIX" == "$OUTPUT_PREFIX" ]; then
-			break
-		else
-			OUTPUT_PREFIX=$(echo "$KVP" | awk '{print $1}')	
-			printf "$PREFIX\n"
-		fi
+		OUTPUT_PREFIX=$(echo "$KVP" | awk '{print $1}')	
+		printf "$PREFIX\n"
 	fi
 
 	if [ "$INFO" = "1" ]; then
+		if [ "$DEBUG" = "1" ]; then
+			printf_debug "+DEBUG: do_output() calling is_mask_le_24_warning"
+		fi
 		printf_info "+INFO: Prefix length: $CIDRMASK"
+		is_mask_le_24_warning
 	fi
 
-	if [ "$DEBUG" = "1" ]; then
-		printf_debug "+DEBUG: do_output() calling is_mask_le_24_warning"
+	if [ "$INFO" = "1" ]; then
+		if [ "$DEBUG" = "1" ]; then
+			printf_debug "+DEBUG: do_output() calling conditional_supression()"
+		fi
+		conditional_supression
 	fi
-	is_mask_le_24_warning
 
-	if [ "$DEBUG" = "1" ]; then
-		printf_debug "+DEBUG: do_output() calling conditional_supression()"
+	if [ "$INFO" = "1" ]; then
+		if [ "$DEBUG" = "1" ]; then
+			printf_debug "+DEBUG: do_output() calling route_qty_check()"
+		fi
+		route_qty_check
 	fi
-	conditional_supression
 
-	if [ "$DEBUG" = "1" ]; then
-		printf_debug "+DEBUG: do_output() calling route_qty_check()"
+	if [ "$INFO" = "1" ]; then
+		if [ "$DEBUG" = "1" ]; then
+			printf_debug "+DEBUG: do_output() calling route_mntby_autnum_mntby_check()"
+		fi
+		route_mntby_autnum_mntby_check
 	fi
-	route_qty_check
 
-	if [ "$DEBUG" = "1" ]; then
-		printf_debug "+DEBUG: do_output() calling route_mntby_autnum_mntby_check()"
+	#if [ "$INFO" = "1" ]; then
+		if [ "$DEBUG" = "1" ]; then
+			printf_debug "+DEBUG: do_output() calling is_visited_pfx()"
+		fi
+		is_visited_pfx	
+	#fi
+
+	if [ "$INFO" = "1" ]; then
+		if [ "$DEBUG" = "1" ]; then
+			printf_debug "+DEBUG: do_output() calling rir_query()"
+		fi
+		rir_query
 	fi
-	route_mntby_autnum_mntby_check
 
-	if [ "$DEBUG" = "1" ]; then
-		printf_debug "+DEBUG: do_output() calling is_visited_pfx()"
+	if [ "$INFO" = "1" ]; then
+		if [ "$DEBUG" = "1" ]; then
+			printf_debug "+DEBUG: do_output() calling check_bogons()"
+		fi
+		check_bogons
 	fi
-	is_visited_pfx	
 
-	if [ "$DEBUG" = "1" ]; then
-		printf_debug "+DEBUG: do_output() calling rir_query()"
+	if [ "$INFO" = "1" ]; then
+		if [ "DEBUG" = "1" ]; then
+			printf_debug "+DEBUG: do_output() calling route_origin_irr_check()"
+		fi
+		route_origin_irr_check
 	fi
-	rir_query
 
-	if [ "$DEBUG" = "1" ]; then
-		printf_debug "+DEBUG: do_output() calling check_bogons()"
-	fi
-	check_bogons
-
-	if [ "DEBUG" = "1" ]; then
-		printf_debug "+DEBUG: do_output() calling route_origin_irr_check()"
-	fi
-	route_origin_irr_check
-
- #	if [ "$PFX_MATCH" = "c0" ]; then 
- #       # CHANGE TO DEBUG
- #       if [ "$INFO" = "1" ]; then
- #           printf_debug "+DEBUG: c0 match - ROUTE_ORIGIN[o] == MEMBER and ROUTE_MNT[o] == AUT_MNT"
- #       	printf_info "+INFO: This route object has same mnt-by as origin AS - ${uline}best candidate IRR data!"
-	#	fi
-
-#	if [ "$PFX_MATCH" = "c1" ]; then
-#        # CHANGE TO DEBUG
-#        if [ "$INFO" = "1" ]; then
-#            printf_debug "+DEBUG: c1 match" 
-#        fi
-#
-#	elif [ "$PFX_MATCH" = "c2" ]; then
-#		# CHANGE TO DEBUG
-#        if [ "$INFO" = "1" ]; then
-#			printf_debug "+DEBUG: c2 match - ROUTE_ORIGIN[o] != MEMBER"
-#		fi
-#
-#	elif [ "$PFX_MATCH" = "c3" ]; then
-#		# CHANGE TO DEBUG
-#        if [ "$INFO" = "1" ]; then
-#            printf_debug "+DEBUG: c3 match - route with identical attributes seen in >1 registry"
-#		fi
-#		
-#		if [ "$WARNING" = "1" ]; then
-#        	printf_warn "+WARNING: This route object exists identically in multi reg. - ${uline}best candidate IRR data, consider deleting redundant data"
-#		fi
-#
-#	elif [ "$PFX_MATCH" = "c4" ]; then
-#		# CHANGE TO DEBUG
-#        if [ "$INFO" = "1" ]; then
-#            printf_debug "+DEBUG: c4 match"
-#		fi
-#	fi
-	
 	if [ "$INFO" = "1" ]; then
     	printf_info "+INFO: Cumulative unique prefix count: $irr_prefix_count"
 	fi
@@ -995,16 +967,18 @@ if [ "$UNAME" = "Darwin" ]; then
     fi
 fi
 
-PYTHON3=$(command -v python3)
-if [ "$DEBUG" = "1" ]; then
-    printf_debug "DEBUG: checking command -v python3"
-fi
-if [ -z "$PYTHON3" ]; then
-    echo "ERROR: no command found for python3. Please check your path or install as required." 
-else
-    if [ "$DEBUG" = "1" ]; then
-        printf_debug "DEBUG: python3 found: [$PYTHON3]"
-    fi
+if [ "$AGG_OUTPUT" = "1" ]; then
+	PYTHON3=$(command -v python3)
+	if [ "$DEBUG" = "1" ]; then
+    	printf_debug "DEBUG: invoked with --agg - checking command -v python3"
+	fi
+	if [ -z "$PYTHON3" ]; then
+    	echo "ERROR: no command found for python3. Please check your path or install as required." && usage
+	else
+    	if [ "$DEBUG" = "1" ]; then
+        	printf_debug "DEBUG: invoked with --agg - python3 found: [$PYTHON3]"
+    	fi
+	fi
 fi
 
 if [ "$DEBUG" = "1" ]; then
@@ -1206,8 +1180,9 @@ process_as_sets() {
 				printf_warn "WARNING:  as-set: ["$AS_SET"] mnt-by: ["${ASS_MNT_ARRAY[$i]}"] source: ["${ASS_SRC_ARRAY[$i]}"]"
 			fi
 	    done
-			printf_warn "WARNING: There is no guarantee each AS-SET object contains the same data and expands to same routes!"
-	    	printf_warn "WARNING: Unexpected behavior may occur depending on order of IRR evaluation when building filters!"
+			printf_warn "+WARNING: There is no guarantee each AS-SET object contains the same data and expands to same routes!"
+	    	printf_warn "+WARNING: Unexpected behavior may occur depending on order of IRR evaluation when building filters!"
+			printf_warn "+WARNING: You should determine which of these is most correct and remove any others from IRR"
 		fi
 		    
 			if [ "$DEBUG" = "1" ]; then
@@ -1319,11 +1294,12 @@ process_as_sets() {
 	    ## OUTPUT
 	    if [ "$WARNING" = "1" ]; then
 			printf_warn "+WARNING: Too much member!"
-	    	printf_warn "+WARNING: Within as-set $AS_SET:"
-	    	printf_warn "+WARNING:  member: "$MEMBER" object found in multiple sources:" 
+	    	printf_warn "+WARNING: Within [as-set $AS_SET]"
+	    	printf_warn "+WARNING:  [member: "$MEMBER"] object found in multiple IRR sources:" 
 	    	for m in "${!AUT_MNT_ARRAY[@]}"; do
 				printf_warn "+WARNING:   [aut-num: "$MEMBER"] object [mnt-by: "${AUT_MNT_ARRAY[$m]}"] [source: "${AUT_MNT_SRC_ARRAY[$m]}"]"
 			done
+			printf_warn "+WARNING: You should determine which of these is most correct and remove any others from IRR"
         fi
     fi
 
