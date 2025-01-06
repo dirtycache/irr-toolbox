@@ -611,7 +611,6 @@ do_output() {
 		if [ "$DEBUG" = "1" ]; then
 			printf_debug "+DEBUG: do_output() calling is_mask_le_24_warning"
 		fi
-		printf_info "+INFO: Prefix length: $CIDRMASK"
 		is_mask_le_24_warning
 	fi
 
@@ -755,7 +754,7 @@ route_origin_irr_check() {
 							printf_warn "+WARNING: ["$i"] origin specification was not found from RIR and was assumed, perhaps incorrectly, to be $MEMBER"
 						fi
 					elif  [ "${ROUTE_ORIGIN["$i"]}" = "$RIR_ORIGIN" ]; then
-						printf_warn "+WARNING: ["$i"] Found IRR route: $PREFIX - ORIGIN MATCH    - ["$ROUTE_SRC"] origin: "${ROUTE_ORIGIN["$i"]}" == RIR OriginAS: "$RIR_ORIGIN""
+						printf_info "+INFO:    ["$i"] Found IRR route: $PREFIX - ORIGIN MATCH    - ["$ROUTE_SRC"] origin: "${ROUTE_ORIGIN["$i"]}" == RIR OriginAS: "$RIR_ORIGIN""
 					else 
 						printf_warn "+WARNING: ["$i"] Found IRR route: $PREFIX - ***DEBUG ORIGIN ELSE**** - route: origin: ["${ROUTE_ORIGIN["$i"]}"] + RIR OriginAS: ["$RIR_ORIGIN"]"
 					fi
@@ -801,8 +800,8 @@ route_mntby_autnum_mntby_check() {
 		else
 		# Throw mismatch warning
 			if [ "$WARNING" = "1" ]; then
-				printf_warn "+WARNING:  route: mnt-by [$ROUTE_MNT] DOES NOT MATCH aut-num: mnt-by [$AUT_MNT]"
-				printf_warn "+WARNING:  Potential error in IRR data for route: $PREFIX"
+				printf_warn "+WARNING:  route: [$i] mnt-by [$ROUTE_MNT] DOES NOT MATCH aut-num: mnt-by [$AUT_MNT]"
+				printf_warn "+WARNING:  route: [$i] Potential error in IRR data for route: $PREFIX"
 			fi
 		fi
 	fi
@@ -1173,11 +1172,11 @@ process_as_sets() {
     if [ "$ASS_EXISTS_COUNT" -gt 1 ]; then	# multiple as-set objects seen
 		if [ "$WARNING" = "1" ]; then
 			printf "$AS_SET\n"
-			printf_warn "WARNING: Too much ass!"
-	    	printf_warn "WARNING: as-set: $AS_SET exists "$ASS_EXISTS_COUNT" times across multiple registries:" 
+			# Too much ass!
+	    	printf_warn "+WARNING: as-set: $AS_SET exists "$ASS_EXISTS_COUNT" times across multiple registries:" 
 	    for i in "${!ASS_MNT_ARRAY[@]}";  do
 		    if [ "$WARNING" = "1" ]; then
-				printf_warn "WARNING:  as-set: ["$AS_SET"] mnt-by: ["${ASS_MNT_ARRAY[$i]}"] source: ["${ASS_SRC_ARRAY[$i]}"]"
+				printf_warn "+WARNING:  as-set: ["$AS_SET"] mnt-by: ["${ASS_MNT_ARRAY[$i]}"] source: ["${ASS_SRC_ARRAY[$i]}"]"
 			fi
 	    done
 			printf_warn "+WARNING: There is no guarantee each AS-SET object contains the same data and expands to same routes!"
@@ -1293,7 +1292,7 @@ process_as_sets() {
     else 
 	    ## OUTPUT
 	    if [ "$WARNING" = "1" ]; then
-			printf_warn "+WARNING: Too much member!"
+			# Too much member!
 	    	printf_warn "+WARNING: Within [as-set $AS_SET]"
 	    	printf_warn "+WARNING:  [member: "$MEMBER"] object found in multiple IRR sources:" 
 	    	for m in "${!AUT_MNT_ARRAY[@]}"; do
