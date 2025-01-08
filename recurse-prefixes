@@ -297,6 +297,44 @@ check_bogons() {
 	fi
 }
 
+cidr_to_binary() {
+    local cidr=$1
+    python3 -c "
+import ipaddress
+cidr = ipaddress.IPv4Network('$cidr', strict=False)
+print(int(cidr.network_address), int(cidr.netmask))
+"
+}
+
+is_parent_prefix() {
+    local parent=$1
+    local child=$2
+
+    # Use Python to determine if the child is within the parent
+    python3 -c "
+import ipaddress
+parent = ipaddress.IPv4Network('$parent', strict=False)
+child = ipaddress.IPv4Network('$child', strict=False)
+
+if child.subnet_of(parent):
+    print('True')
+else:
+    print('False')
+" | grep -q 'True' && return 0 || return 1
+}
+
+is_prefix_in_cidr() {
+    local prefix=$1
+    local cidr=$2
+
+    # Check if the prefix is within the CIDR
+    if is_parent_prefix "$cidr" "$prefix"; then
+        return 0  # True (match found)
+    else
+        return 1  # False (no match)
+    fi
+}
+
 ## TODO as_rir_query()
 
 rir_query() {
@@ -411,10 +449,10 @@ rir_query() {
 			baseNet=${PREFIX%%/*}
 			#ARIN_NetType=$(whois -h whois.arin.net $PREFIX | awk '/^NetType:/ { $1=""; print substr($0, 2) }')
 			ARIN_NetType=$(whois -h whois.arin.net $baseNet | awk '/^NetType:/ { $1=""; print substr($0, 2) }')
-			#if [ "$DEBUG" = "1" ]; then
-				printf_debug "+DEBUG whois ARIN baseNet: $baseNet"
+			if [ "$DEBUG" = "1" ]; then
+				printf_debug "+DEBUG: whois ARIN baseNet: $baseNet"
 				printf_debug "+DEBUG: ARIN_NetType: $ARIN_NetType"
-			#fi
+			fi
 			if [[ "$ARIN_NetType" == "Allocated to ARIN" || "$ARIN_NetType" == "Direct Allocation" ]]; then
 				FoundTheMonkeys=1
 				RIR="ARIN"
@@ -504,14 +542,35 @@ rir_query() {
 
 	if [ "$RIR" = "ARIN" ]; then
 		baseNet=${PREFIX%%/*}
-		# Parent CIDR
-		ARIN_Fetched_CIDR=$(whois -h whois.arin.net $baseNet | awk '/^CIDR:/ {print $2}')
+		# Parent CIDR(s)
+		#ARIN_Fetched_CIDR=$(whois -h whois.arin.net $baseNet | awk '/^CIDR:/ {print $2}')
+		#ARIN_Fetched_CIDR=$(whois -h whois.arin.net $baseNet | awk '/^CIDR:/ {gsub(",", " ", $0); for (i=2; i<=NF; i++) print $i}')
+		IFS=', ' read -r -a ARIN_Fetched_CIDR <<< "$(whois -h whois.arin.net $baseNet | awk '/^CIDR:/ {gsub(/^CIDR:\s*/, ""); gsub(/\s+/, " "); sub(/^ */, ""); print $0}')"
+
 		if [ "$INFO" = "1" ]; then
-			printf_info "+INFO: ARIN query fetched CIDR: $ARIN_Fetched_CIDR"
+			printf_info "+INFO: Found ${#ARIN_Fetched_CIDR[@]} CIDRs from ARIN query for $baseNet"
+			for i in "${!ARIN_Fetched_CIDR[@]}"; do
+				printf_info "+INFO:  ["$i"] "${ARIN_Fetched_CIDR[$i]}""
+			done
+			for i in "${!ARIN_Fetched_CIDR[@]}"; do
+    			if is_prefix_in_cidr "$PREFIX" "${ARIN_Fetched_CIDR[$i]}"; then
+        			printf_info "+INFO: Matched $PREFIX to ARIN CIDR: [$i] "${ARIN_Fetched_CIDR[$i]}""
+					ARIN_Matched_CIDR="${ARIN_Fetched_CIDR[$i]}"
+       			 	break  # Stop further evaluation once a match is found
+				else
+					printf_debug "DEBUG: $PREFIX is not child of [$i] "${ARIN_Fetched_CIDR[$i]}""
+    			fi
+			done
 		fi
-		if [ "$ARIN_Fetched_CIDR" != "$PREFIX" ]; then
+
+		if [ "$ARIN_Matched_CIDR" != "$PREFIX" ]; then
 			if [ "$WARNING" = "1" ]; then 
-				printf_warn "+WARNING: route: $PREFIX does not match ARIN CIDR: $ARIN_Fetched_CIDR - make sure you really want to do this"
+				printf_warn "+WARNING: route: $PREFIX does not match ARIN CIDR: $ARIN_Matched_CIDR"
+				printf_warn "+WARNING: If this is YOUR route: object, make sure you really want to do this"
+				printf_warn "+WARNING: Instead please consider:"
+				printf_warn "+WARNING:  1) $ROUTE_MNT create or ensure exists: [route: $ARIN_Matched_CIDR]"
+				printf_warn "+WARNING:  2) build filter based upon $ARIN_Matched_CIDR le $CIDRMASK"
+				printf_warn "+WARNING:  3) $ROUTE_MNT delete from IRR this more specific [route: $PREFIX] object" 
 			fi
 			if [ "$INFO" = "1" ]; then
 				printf_info "+INFO: Querying ARIN for info of covering CIDR $ARIN_Fetched_CIDR instead of $PREFIX"
@@ -597,7 +656,7 @@ do_output() {
 	
 	if [ "$INFO_CHAIN" = "1" ]; then	# Print header for INFO_CHAIN
 		printf "\n"
-		printf "current_as_set_chain: "$current_as_set_chain"\n"
+		#printf "current_as_set_chain: "$current_as_set_chain"\n"
 		printf "%s (enumerated from %s %s)\n" "$PREFIX" "$current_as_set_chain" "$MEMBER"
 		printf "\n"
 	elif [ "$WARNING" = "1" ]; then		# Print header for WARNING
@@ -800,8 +859,7 @@ route_mntby_autnum_mntby_check() {
 		else
 		# Throw mismatch warning
 			if [ "$WARNING" = "1" ]; then
-				printf_warn "+WARNING:  route: [$i] mnt-by [$ROUTE_MNT] DOES NOT MATCH aut-num: mnt-by [$AUT_MNT]"
-				printf_warn "+WARNING:  route: [$i] Potential error in IRR data for route: $PREFIX"
+				printf_warn "+WARNING:  route: [$i] mnt-by [$ROUTE_MNT] DOES NOT MATCH aut-num: $MEMBER mnt-by: [$AUT_MNT]"
 			fi
 		fi
 	fi
@@ -1299,6 +1357,7 @@ process_as_sets() {
 				printf_warn "+WARNING:   [aut-num: "$MEMBER"] object [mnt-by: "${AUT_MNT_ARRAY[$m]}"] [source: "${AUT_MNT_SRC_ARRAY[$m]}"]"
 			done
 			printf_warn "+WARNING: You should determine which of these is most correct and remove any others from IRR"
+			printf_warn "+WARNING: route mnt-by mismatch errors with aut-num mnt-by will be inaccurate until this is fixed!"
         fi
     fi
 
