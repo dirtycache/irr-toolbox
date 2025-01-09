@@ -26,27 +26,34 @@ START_TIME=$(date +%s.%N)
 # Usage function to display help message
 usage() {
     echo " "
-    echo "irr-toolbox:recurse-prefixes - get prefixes by as-set from IRR"
+    echo "irr-toolbox:recurse-prefixes4 - examine IPv4 prefixes from IRR aut-num or as-set objects"
     echo " "
     echo "Recurse a given as-set object through member aut-nums and member as-sets which themselves contain."
     echo "aut-nums, until the end-of-recursion aut-num is reached. Query aut-num objects for originated prefixes."
+    echo "Alternatively, when the given object is an aut-num, enumerate prefixes from route objects specifying that origin AS"
     echo " "
 	echo "Uses ANSI colors.  Suggested terminal width is >=120 columns"
 	echo " "
-    echo "Usage: $0 <as_set_name|aut-num> [-m|--mnt <mnt-by> -s|--source <irr_source> <as_set_name> [-i|--info -w|--warning|--agg|--debug -h|--help]"
+    echo "Usage: $0 <as_set_name|aut-num>  -m|--mnt <mnt-by>" 
+	echo "                                 -s|--source <irr_source> <as_set_name>"
+	echo "                                 -i|--info"
+	echo "                                 -w|--warning"
+	echo "                                 -c|--chain"
+	echo "                                 --agg"
+	echo "                                 --debug"
+	echo "                                 -h|--help"
     echo " "
     printf "%-30s %-80s \n" "<as_set_name|aut-num>" "The IRR object you wish to enumerate"
-    printf "%-30s %-80s \n" "-c|--chain" "Output IRR data relative to each prefix, e.g., as-set recusion until aut-num for origin"
     printf "%-30s %-80s \n" "" "Useful when combined with -i|--info"
     printf "%-30s %-80s \n" "-m|--mnt <mnt-by>" "The name of your maintainer holding *your* as-set, route, and other IRR objects"
     printf "%-30s %-80s \n" "" "Assumed to be the maintainer of the as-set but can be overriden with this flag"
     printf "%-30s %-80s \n" "" "if you have a reason to do so"
-    printf "%-30s %-80s \n" "-s|--source <irr_source>" "Name of IRR to query such as NTTCOM, RADB, ALTDB, LEVEL3"
+    printf "%-30s %-80s \n" "-s|--source <irr_source>" "Restrict object matching based on source: attribute such as NTTCOM, RADB, ARIN"
     printf "%-30s %-80s \n" "" "See https://irr.net/registry for full list of SOURCE options"
-    printf "%-30s %-80s \n" "" "Defaults to NTTCOM if not specified"
     printf "%-30s %-80s \n" "-i|--info"	"Output verbose extra information about the enumerated route objects from the as-set"
     printf "%-30s %-80s \n" "" "Implicitly sets -w|--warning"
     printf "%-30s %-80s \n" "-w|--warning"	"See warnings about possible IRR data issues (without extra output of -i|--info)"
+    printf "%-30s %-80s \n" "-c|--chain" "Output IRR data relative to each prefix, e.g., as-set recusion until aut-num for origin"
     printf "%-30s %-80s \n" "--agg"	"Do not output the raw prefix list from the as-set."
 	printf "%-30s %-80s \n" "" "Instead, run it though aggregate6 for prefix aggregation first"
     printf "%-30s %-80s \n" "" "Requires python3 venv and will create one in ./.venv_irr-toolbox"
@@ -191,8 +198,10 @@ is_visited_pfx() {
 conditional_supression() {
 	# ADD DEBUG
 	if [ "$DEBUG" = "1" ]; then
-		printf_inverted "+DEBUG: conditonal_supression() start for $PREFIX"
+		printf_inverted "+DEBUG: conditional_supression() start for $PREFIX"
 	fi
+	SUPPRESSED="0"
+	RIR_Suppressed="0"
 	if [[ $PREFIX =~ ^44. ]]; then
 		if [ "$INFO" = "1" ]; then
 			printf_info "+INFO: 44net prefix detected, suppressing proxy reg warning because you can't create RIR route objects"
@@ -200,13 +209,13 @@ conditional_supression() {
 			printf_info "+INFO: is usually done by another mntner in a non-RIR registry"
 		fi
 		SUPPRESSED="1"
+		RIR_Suppressed="1"
+		RIR_ORIGIN="$MEMBER"
 	elif [[ "${ROUTE_MNT[$o]}" = "MAINT-AS20473" && "${ROUTE_SRC[$o]}" = "RADB" ]]; then
 		if [ "$INFO" = "1" ]; then
 			printf_info "+INFO: Suppressing mnt-by mismatch warning because it's Vultr in RADB, and that's just how they do things :("
 		fi
 		SUPPRESSED="1"
-	else
-		SUPPRESSED="0"
 	fi
 	# ADD DEBUG
 	if [ "$DEBUG" = "1" ]; then
@@ -409,11 +418,13 @@ rir_query() {
 
 ### START OF LEGACY SANITY CHECK
 	# First, check for LEGACY because if so IANA may be wrong and we have to check things manually
-	if [ "$iana_status" == "LEGACY" ]; then
-		if [ "$INFO" = "1" ]; then
-			printf_info_bold "+INFO: IANA LEGACY status, so RIR: $RIR could be a lie. Have to check the other registries now"
-		fi
+	if [[ "$INFO" = "1" && "$iana_status" == "LEGACY" && "$RIR_Suppressed" = "1" ]]; then
+		printf_info "+INFO: Status LEGACY RIR check suppressed by prefix matching rule"
+	elif [[ "$INFO" = "1" && "$iana_status" == "LEGACY" && "$RIR_Suppressed" = "0" ]]; then
+		printf_info_bold "+INFO: IANA LEGACY status, so RIR: $RIR could be a lie. Have to check the other registries now"
+	fi
 
+	if [[ "$INFO" == "1" && "$iana_status" == "LEGACY" && "$RIR_Suppressed" = "0" ]]; then
 		# ADD DEBUG 
 		if [ "$DEBUG" = "1" ]; then
 		 	printf_debug "DEBUG: rir_query() iana_status=LEGACY matched - unset FoundTheMonkeys"
@@ -421,7 +432,6 @@ rir_query() {
 		unset FoundTheMonkeys
 
 		# Query all the fuckin' RIR whois I guess...
-		RIPE_netname=$(whois -h whois.ripe.net $PREFIX | awk '/^netname:/ { $1=""; print substr($0, 2) }')
 
 		# LEGACY AFRINIC
 		if [ "$DEBUG" = "1" ]; then
@@ -447,7 +457,6 @@ rir_query() {
 		# LEGACY ARIN
 		if [ "$FoundTheMonkeys" = "0" ]; then
 			baseNet=${PREFIX%%/*}
-			#ARIN_NetType=$(whois -h whois.arin.net $PREFIX | awk '/^NetType:/ { $1=""; print substr($0, 2) }')
 			ARIN_NetType=$(whois -h whois.arin.net $baseNet | awk '/^NetType:/ { $1=""; print substr($0, 2) }')
 			if [ "$DEBUG" = "1" ]; then
 				printf_debug "+DEBUG: whois ARIN baseNet: $baseNet"
@@ -477,10 +486,10 @@ rir_query() {
 		if [ "$FoundTheMonkeys" = "0" ]; then
 			RIPE_netname=$(whois -h whois.ripe.net $PREFIX | awk '/^netname:/ { $1=""; print substr($0, 2) }')
 			# ADD DEBUG
-			if [ "$DEBUG" = "1" ]; then
+			#if [ "$DEBUG" = "1" ]; then
 				printf_debug "+DEBUG whois RIPE $PREFIX"
 				printf_debug "+DEBUG: RIPE_netname: $RIPE_netname"
-			fi
+			#fi
 			if [ "$RIPE_netname" != "NON-RIPE-NCC-MANAGED-ADDRESS-BLOCK" ]; then
 				FoundTheMonkeys=1
 				RIR="RIPE"
@@ -531,8 +540,6 @@ rir_query() {
 			unset APNIC_netname
 		fi
 
-
-
 		if [ "$FoundTheMonkeys" = "0" ]; then
 			printf_inverted "ERROR: FoundTheMonkeysStill is 0"
 		fi
@@ -540,21 +547,26 @@ rir_query() {
 	fi
 ### END OF LEGACY SANITY CHECK
 
-	if [ "$RIR" = "ARIN" ]; then
+	if [[ "$RIR" = "ARIN" && "$RIR_Suppressed" == "0" ]]; then
 		baseNet=${PREFIX%%/*}
 		# Parent CIDR(s)
 		#ARIN_Fetched_CIDR=$(whois -h whois.arin.net $baseNet | awk '/^CIDR:/ {print $2}')
 		#ARIN_Fetched_CIDR=$(whois -h whois.arin.net $baseNet | awk '/^CIDR:/ {gsub(",", " ", $0); for (i=2; i<=NF; i++) print $i}')
 		IFS=', ' read -r -a ARIN_Fetched_CIDR <<< "$(whois -h whois.arin.net $baseNet | awk '/^CIDR:/ {gsub(/^CIDR:\s*/, ""); gsub(/\s+/, " "); sub(/^ */, ""); print $0}')"
 
-		if [ "$INFO" = "1" ]; then
-			printf_info "+INFO: Found ${#ARIN_Fetched_CIDR[@]} CIDRs from ARIN query for $baseNet"
-			for i in "${!ARIN_Fetched_CIDR[@]}"; do
-				printf_info "+INFO:  ["$i"] "${ARIN_Fetched_CIDR[$i]}""
-			done
+		if [ "$WARNING" = "1" ]; then
+			if [ "$INFO" = "1" ]; then
+				printf_info "+INFO: Found ${#ARIN_Fetched_CIDR[@]} CIDRs from ARIN query for $baseNet"
+				for i in "${!ARIN_Fetched_CIDR[@]}"; do
+					printf_info "+INFO:  ["$i"] "${ARIN_Fetched_CIDR[$i]}""
+				done
+			fi
+			
 			for i in "${!ARIN_Fetched_CIDR[@]}"; do
     			if is_prefix_in_cidr "$PREFIX" "${ARIN_Fetched_CIDR[$i]}"; then
-        			printf_info "+INFO: Matched $PREFIX to ARIN CIDR: [$i] "${ARIN_Fetched_CIDR[$i]}""
+					if [ "$INFO" = "1" ]; then
+        				printf_info "+INFO: Matched $PREFIX to ARIN CIDR: [$i] "${ARIN_Fetched_CIDR[$i]}""
+					fi
 					ARIN_Matched_CIDR="${ARIN_Fetched_CIDR[$i]}"
        			 	break  # Stop further evaluation once a match is found
 				else
@@ -566,8 +578,10 @@ rir_query() {
 		if [ "$ARIN_Matched_CIDR" != "$PREFIX" ]; then
 			if [ "$WARNING" = "1" ]; then 
 				printf_warn "+WARNING: route: $PREFIX does not match ARIN CIDR: $ARIN_Matched_CIDR"
-				printf_warn "+WARNING: If this is YOUR route: object, make sure you really want to do this"
-				printf_warn "+WARNING: Instead please consider:"
+				printf_warn "+WARNING: This may be innocuous, such as a longer prefix reassigned from the parent CIDR"
+				printf_warn "+WARNING: which has not been properly reassigned (SWIP) to $MEMBER"
+				printf_warn "+WARNING: Please ensure the prefix length is accurate!"
+				printf_warn "+WARNING: If $MEMBER holds the entire $ARIN_Matched_CIDR number resource, please consider:"
 				printf_warn "+WARNING:  1) $ROUTE_MNT create or ensure exists: [route: $ARIN_Matched_CIDR]"
 				printf_warn "+WARNING:  2) build filter based upon $ARIN_Matched_CIDR le $CIDRMASK"
 				printf_warn "+WARNING:  3) $ROUTE_MNT delete from IRR this more specific [route: $PREFIX] object" 
@@ -638,7 +652,7 @@ rir_query() {
 			printf_info "+INFO: ARIN OrgId: $ARIN_ORG_ID"
 			printf_info "+INFO: ARIN OriginAS: $ARIN_ORIGINAS"
 			if [ "$ARIN_ORIGINAS" = "arin_no_originas_found" ]; then
-					printf_info_bold "+INFO: Cannot determine origin AS from $RIR. Assuming $MEMBER"
+					printf_info_bold "+INFO: Cannot determine origin AS from $RIR. Assuming $MEMBER (which could be wrong!)"
 			fi
 		fi
 	fi
@@ -656,8 +670,11 @@ do_output() {
 	
 	if [ "$INFO_CHAIN" = "1" ]; then	# Print header for INFO_CHAIN
 		printf "\n"
-		#printf "current_as_set_chain: "$current_as_set_chain"\n"
-		printf "%s (enumerated from %s %s)\n" "$PREFIX" "$current_as_set_chain" "$MEMBER"
+		if [ "$Is_Autnum" == "1" ]; then
+			printf "%s (origin %s)" "$PREFIX" "$MEMBER"
+		else	
+			printf "%s (enumerated from %s %s)" "$PREFIX" "$current_as_set_chain" "$MEMBER"
+		fi
 		printf "\n"
 	elif [ "$WARNING" = "1" ]; then		# Print header for WARNING
 		printf "\n$PREFIX\n"
@@ -666,56 +683,54 @@ do_output() {
 		printf "$PREFIX\n"
 	fi
 
-	if [ "$INFO" = "1" ]; then
+	if [ "$WARNING" = "1" ]; then
 		if [ "$DEBUG" = "1" ]; then
 			printf_debug "+DEBUG: do_output() calling is_mask_le_24_warning"
 		fi
 		is_mask_le_24_warning
 	fi
 
-	if [ "$INFO" = "1" ]; then
+	if [ "$WARNING" = "1" ]; then
 		if [ "$DEBUG" = "1" ]; then
 			printf_debug "+DEBUG: do_output() calling conditional_supression()"
 		fi
 		conditional_supression
 	fi
 
-	if [ "$INFO" = "1" ]; then
+	if [ "$WARNING" = "1" ]; then
 		if [ "$DEBUG" = "1" ]; then
 			printf_debug "+DEBUG: do_output() calling route_qty_check()"
 		fi
 		route_qty_check
 	fi
 
-	if [ "$INFO" = "1" ]; then
+	if [ "$WARNING" = "1" ]; then
 		if [ "$DEBUG" = "1" ]; then
 			printf_debug "+DEBUG: do_output() calling route_mntby_autnum_mntby_check()"
 		fi
 		route_mntby_autnum_mntby_check
 	fi
 
-	#if [ "$INFO" = "1" ]; then
 		if [ "$DEBUG" = "1" ]; then
 			printf_debug "+DEBUG: do_output() calling is_visited_pfx()"
 		fi
 		is_visited_pfx	
-	#fi
 
-	if [ "$INFO" = "1" ]; then
+	if [ "$WARNING" = "1" ]; then
 		if [ "$DEBUG" = "1" ]; then
 			printf_debug "+DEBUG: do_output() calling rir_query()"
 		fi
 		rir_query
 	fi
 
-	if [ "$INFO" = "1" ]; then
+	if [ "$WARNING" = "1" ]; then
 		if [ "$DEBUG" = "1" ]; then
 			printf_debug "+DEBUG: do_output() calling check_bogons()"
 		fi
 		check_bogons
 	fi
 
-	if [ "$INFO" = "1" ]; then
+	if [ "$WARNING" = "1" ]; then
 		if [ "DEBUG" = "1" ]; then
 			printf_debug "+DEBUG: do_output() calling route_origin_irr_check()"
 		fi
@@ -813,23 +828,16 @@ route_origin_irr_check() {
 							printf_warn "+WARNING: ["$i"] origin specification was not found from RIR and was assumed, perhaps incorrectly, to be $MEMBER"
 						fi
 					elif  [ "${ROUTE_ORIGIN["$i"]}" = "$RIR_ORIGIN" ]; then
-						printf_info "+INFO:    ["$i"] Found IRR route: $PREFIX - ORIGIN MATCH    - ["$ROUTE_SRC"] origin: "${ROUTE_ORIGIN["$i"]}" == RIR OriginAS: "$RIR_ORIGIN""
+						printf_warn "+WARNING:    ["$i"] Found IRR route: $PREFIX - ORIGIN MATCH    - ["$ROUTE_SRC"] origin: "${ROUTE_ORIGIN["$i"]}" == RIR OriginAS: "$RIR_ORIGIN""
 					else 
-						printf_warn "+WARNING: ["$i"] Found IRR route: $PREFIX - ***DEBUG ORIGIN ELSE**** - route: origin: ["${ROUTE_ORIGIN["$i"]}"] + RIR OriginAS: ["$RIR_ORIGIN"]"
+						printf_inverted "+ERROR: ["$i"] Found IRR route: $PREFIX - ***DEBUG ORIGIN ELSE**** - route: origin: ["${ROUTE_ORIGIN["$i"]}"] + RIR OriginAS: ["$RIR_ORIGIN"]"
 					fi
 				done
 			fi
 		fi
 	fi
 
-	if [[ ${#ROUTE_ORIGIN[@]} -eq 1 && "$RIR_ORIGIN" != "$MEMBER" && "$WARNING" = "1" ]]; then
-		printf_warn "+WARNING:  The object with origin: "$MEMBER" appears to be the only way $PREFIX can possibly be"
-		printf_warn "+WARNING:  included (via "$AS_SET" member: "$MEMBER")"
-		printf_warn "+WARNING:  You need to modify your IRR data for AS-SET "$AS_SET" so you have either:"
-		printf_warn "+WARNING:   a) member: <AS-SET which recurses to member: "$RIR_ORIGIN">"
-		printf_warn "+WARNING:   b) member: "$RIR_ORIGIN" (less preferable method)"
-		printf_warn "+WARNING:  before you delete route: "$PREFIX" with origin: "${ROUTE_ORIGIN["$i"]}" from IRR"
-	elif [[ ${#ROUTE_ORIGIN[@]} -eq 1 && "$RIR_ORIGIN" = "$MEMBER" && "$INFO" = "1" ]]; then
+	if [[ ${#ROUTE_ORIGIN[@]} -eq 1 && "$RIR_ORIGIN" = "$MEMBER" && "$INFO" = "1" ]]; then
 		printf_info "+INFO: Only 1 route object seen and IRR origin [${ROUTE_ORIGIN[0]}] matches RIR origin [$RIR_ORIGIN]"
 	fi
 
@@ -840,10 +848,10 @@ route_origin_irr_check() {
 }
 
 route_mntby_autnum_mntby_check() {
-	# ADD DEBUG
 	if [ "$DEBUG" = "1" ]; then
-		printf_inverted "+DEBUG: route_mntby_autnum_mntby_check() start for $PREFIX"
+		printf_debug "+DEBUG: route_mntby_autnum_mntby_check() start for $PREFIX"
 	fi
+
 	# There is no mismatch 
 	if [ "$ROUTE_MNT" = "$AUT_MNT" ]; then 
 		if [ "$INFO" = "1" ]; then
@@ -859,21 +867,27 @@ route_mntby_autnum_mntby_check() {
 		else
 		# Throw mismatch warning
 			if [ "$WARNING" = "1" ]; then
-				printf_warn "+WARNING:  route: [$i] mnt-by [$ROUTE_MNT] DOES NOT MATCH aut-num: $MEMBER mnt-by: [$AUT_MNT]"
+				printf_warn "+WARNING:  [$i] route: mnt-by [$ROUTE_MNT] DOES NOT MATCH aut-num: $MEMBER mnt-by: [$AUT_MNT]"
+				if [ "$ROUTE_MNT" == "MAINT-AS27506" ]; then
+					printf_info_bold "++INFO: Crown Castle (AS27506,AS46887) is a known promulgator of IRR bullshit under this mntner"
+					printf_info_bold "++INFO: specifying their customer as origin AS rather than adding customer as-sets to AS-CCF."
+					printf_info_bold "++INFO: Contact <fiberProvAM@crowncastle.com> for removal and advise the technician to review ticket# CCF22489011"
+					printf_info_bold "But make sure that CCF adds members: <your as-set> to AS-CCF first!"
+					printf_info_bold "While you are pestering them, convince them to add remarks: Level3 members: for...well, everything."
+				fi
 			fi
 		fi
 	fi
 
-	# ADD DEBUG
 	if [ "$DEBUG" = "1" ]; then
-		printf_inverted "+DEBUG: route_mntby_autnum_mntby_check() end for $PREFIX\n"
+		printf_debug "+DEBUG: route_mntby_autnum_mntby_check() end for $PREFIX\n"
 	fi
 }	
 
 #### END SECTION: BASH FUNCTIONS
 
 ## defaults for input variables
-SOURCE="NTTCOM"
+#SOURCE="NTTCOM"
 AS_SET="$1"
 DEBUG="0"
 AGG_OUTPUT="0"
@@ -898,7 +912,9 @@ done
 if [ "$DEBUG" = "1" ]; then
 	INFO="1"
 	WARNING="1"
-elif [ "$INFO" = "1" ]; then
+fi
+
+if [ "$INFO" = "1" ]; then
 	WARNING="1"
 fi
 
@@ -1076,39 +1092,9 @@ get_member_autnums() { grep "^members:" | awk '{print $2}' | tr , '\n' | grep -v
 ## function get_member_as_sets
 get_member_as_sets() { grep "^members:" | awk '{print $2}' | tr , '\n' | grep "AS-"; }
 
-## function get_l3_members
-get_l3_members() { grep -E "^remarks:\s+Level3 members:" | sed -E 's/^remarks:[[:space:]]+Level3 members: //' | tr , '\n'; }
-
 # Track the recursion stack for AS-SET chains
 declare -a AS_SET_STACK
 declare -a ROUTE_ORIGIN
-
-## function validate_as_set
-validate_as_set() {
-    local as_set="$1"
-    if [ "$DEBUG" = "1" ]; then
-	printf_debug "DEBUG: executing validate_as_set() for as-set: [$as_set]"
-    fi
-    if [[ "$as_set" =~ ^(AS(([0-9]+):AS-.*)|^AS-.*|^AS[0-9]+)$ ]]; then
-        if [ "$DEBUG" = "1" ]; then
-            printf_debug "DEBUG: validate_as_set() returns 0 for valid format of AS_SET or AUT-NUM: [$as_set]"
-        fi
-        return 0  # Valid AS_SET or AUT-NUM
-    else
-        if [ "$DEBUG" = "1" ]; then
-            printf_debug "DEBUG: valid_as_set() returns 1 for invalid AS_SET: [$as_set]"
-        fi
-        return 1  # Invalid AS_SET or AUT-NUM
-    fi
-}
-
-# Validate AS_SET
-if [ "$DEBUG" = "1" ]; then
-    printf_debug "DEBUG: Validating AS-SET or AUT-NUM"
-fi
-if ! validate_as_set "$AS_SET"; then
-    echo "ERROR: Invalid AS-SET or AUT-NUM format" && usage
-fi
 
 # Recurse AS_SET
 case "$SOURCE" in
@@ -1130,7 +1116,7 @@ case "$SOURCE" in
     REACH) IRR="rr.telstraglobal.net";;
     RIPE) IRR="whois.ripe.net";;
     TC) IRR="whois.bgp.net.br";;
-    *) echo "ERROR: Unknown source: $SOURCE" && exit 1;;
+    *) IRR="rr.ntt.net";;
 esac
 
 # Initialize arrays to track visited objects
@@ -1144,32 +1130,60 @@ modify_as_chain() {
     local member="$2"
 
     if [ "$DEBUG" = "1" ]; then
-        printf_debug "DEBUG: 1 modify_as_chain()> blorp AS-SET: ["$AS_SET"]"
-        printf_debug "DEBUG: 2 modify_as_chain()> blorp local member: ["$member"]"
-        printf_debug "DEBUG: 3 modify_as_chain()> blorp current_as_set_chain: ["$current_as_set_chain"]"
-        printf_debug "DEBUG: 4 modify_as_chain()> blorp before if local current_chain: ["$current_chain"]"
+        printf_debug "DEBUG: modify_as_chain()> AS-SET: ["$AS_SET"]"
+        printf_debug "DEBUG: modify_as_chain()> local member: ["$member"]"
+        printf_debug "DEBUG: modify_as_chain()> current_as_set_chain: ["$current_as_set_chain"]"
+        printf_debug "DEBUG: modify_as_chain()> before if local current_chain: ["$current_chain"]"
     fi
 
     # Only append member if it's not already in the chain to avoid duplicates
     if [[ ! "$current_chain" =~ (^| )$member($| ) ]]; then
 		if [ "$DEBUG" = "1" ]; then
-        	printf_debug "DEBUG: 5 modify_as_chain()> if match; modifying"
+        	printf_debug "DEBUG: modify_as_chain()> if match; modifying"
 		fi
         current_chain="$current_chain $member"
 		if [ "$DEBUG" = "1" ]; then
-			printf_debug "DEBUG: 6 modify_as_chain()> modified current_chain: [$current_chain]"
+			printf_debug "DEBUG: modify_as_chain()> modified current_chain: [$current_chain]"
     	fi
 	fi
     if [ "$DEBUG" = "1" ]; then
-        printf_debug "DEBUG: 7 modify_as_chain()> no match - current_chain: [$current_chain]"
-        printf_debug "DEBUG: 8 end of modify_as_chain()"
+        printf_debug "DEBUG: modify_as_chain()> no match - current_chain: [$current_chain]"
+        printf_debug "DEBUG: end of modify_as_chain()"
     fi
 }
 
 ASS_EXIST_COUNT=0
 
 process_as_sets() {
-    local AS_SET="$1"
+    local as_set="$1"
+	# Parse the given as-set and figure out if it's an as-set or an aut-num
+	if [[ "$as_set" =~ ^[Aa][Ss][0-9]{1,}$ ]]; then
+		# ADD DEBUG
+		if [ "$DEBUG" == "1" ]; then
+    		printf_debug "$AS_SET is an aut-num"
+		fi
+		Is_AsSet="0"
+		Is_Autnum="1"
+	elif [[ "$AS_SET" =~ ^[Aa][Ss][0-9]{1,}:[Aa][Ss]-.*$ ]]; then
+		# ADD DEBUG
+		if [ "$DEBUG" == "1" ]; then
+    		printf_debug "$AS_SET is an as-set with an aut-num prefix"
+		fi
+		Is_AsSet="1"
+		Is_Autnum="0"
+	elif [[ "$AS_SET" =~ ^[Aa][Ss]-.*$ ]]; then
+		# ADD DEBUG
+		if [ "$DEBUG" == "1" ]; then
+    		printf_debug "$AS_SET is an as-set without an aut-num prefix"
+		fi
+		Is_AsSet="1"
+		Is_Autnum="0"
+	else
+		if [ "$DEBUG" == "1" ]; then
+    		printf_debug "$AS_SET does not match any recognized pattern" && usage
+		fi
+	fi
+
     if [ "$DEBUG" = "1" ]; then
         printf_debug "DEBUG: process_as_sets()> start for processing AS-SET: ["$AS_SET"]"
 		printf_debug "DEBUG: process_as_sets()> initial AS_SET_STACK[*]: "${AS_SET_STACK[*]}""
@@ -1196,9 +1210,15 @@ process_as_sets() {
     ASS_EXISTS_COUNT=0
     if [ "$DEBUG" = "1" ]; then
 	    printf_debug "DEBUG: process_as_sets()> Generating ASS_IRR_OUT for "$AS_SET" against "$IRR""
-	    printf_debug "DEBUG: process_as_sets()> "$WHOIS" -h "$IRR" "$AS_SET""
+	    printf_debug "DEBUG: process_as_sets()> "$WHOIS" -h "$IRR" [-s "$SOURCE"] "$AS_SET""
     fi
-    ASS_IRR_OUT=$("$WHOIS" -h "$IRR" "$AS_SET")
+    
+	if [[ -n "$SOURCE" ]]; then
+		ASS_IRR_OUT=$("$WHOIS" -h "$IRR" -s "$SOURCE" "$AS_SET")
+	else
+    	ASS_IRR_OUT=$("$WHOIS" -h "$IRR" "$AS_SET")
+	fi
+
     IFS=$' ' read -r -d '' -a ASS_MNT_ARRAY < <(echo "$ASS_IRR_OUT" |
 	    awk '/^mnt-by:/ {print $2}' |
 	    tr '\n' ' ' && printf '\0')
@@ -1276,22 +1296,40 @@ process_as_sets() {
 	    printf_debug "DEBUG: <process_as_sets()#GetMembers> AS_SET: ["$AS_SET"]"
     fi
     ## aut-num 
-    MEMBERS=$("$WHOIS" -h "$IRR" "$AS_SET" | get_member_autnums)
+	if [[ -n "$SOURCE" ]]; then
+    	MEMBERS=$("$WHOIS" -h "$IRR" -s "$SOURCE" "$AS_SET" | get_member_autnums)
+	else
+    	MEMBERS=$("$WHOIS" -h "$IRR" "$AS_SET" | get_member_autnums)
+	fi
+
     if [ "$DEBUG" = "1" ]; then
 	    printf_debug "DEBUG: <process_as_sets()#aut-num>    |->aut-num MEMBERS: [$(echo "$MEMBERS" | tr '\n' ' ')]" 
     fi
     ## as-set
-    MEMBERS_ASS=$("$WHOIS" -h "$IRR" "$AS_SET" | get_member_as_sets)
+	if [[ -n "$SOURCE" ]]; then
+    	MEMBERS_ASS=$("$WHOIS" -h "$IRR" -s "$SOURCE" "$AS_SET" | get_member_as_sets)
+	else
+    	MEMBERS_ASS=$("$WHOIS" -h "$IRR" "$AS_SET" | get_member_as_sets)
+	fi
     if [ "$DEBUG" = "1" ]; then 
 	    printf_debug "DEBUG: <process_as_sets()#as-set>     |->as-set MEMBERS_ASS: [$(echo "$MEMBERS_ASS" | tr '\n' ' ')]"
     fi
 
-	if [[ -z "$MEMBERS" && -z "$MEMBERS_ASS" ]]; then 
+	if [[ -z "$MEMBERS" && -z "$MEMBERS_ASS" && "Is_AsSet" == "1" ]]; then 
+		printf_debug "DEBUG: Is_AsSet = $Is_AsSet"
+		printf_debug "DEBUG: Is_Autnum = $Is_Autnum"
 		if [ "$WARNING" = "1" ]; then
 	   		printf_warn "WARNING: AS-SET object $AS_SET not found or contains no members!"
 		fi
     	# bail out of this iternation of process_as_sets()
 		return
+	fi
+
+	if [[ -z "$MEMBERS" && -z "$MEMBERS_ASS" && "$Is_Autnum" == "1" ]]; then 
+		if [ "$DEBUG" == "1" ]; then
+			printf_debug "DEBUG: is an aut-num - set MEMBERS to itself"
+		fi
+		MEMBERS="$as_set"
 	fi
 
     current_as_set_chain="${AS_SET_STACK[*]}"
@@ -1319,7 +1357,17 @@ process_as_sets() {
 	    fi
 
     # Parse maintainers for the member aut-num 
-    AUT_MNT_IRR_OUT=$("$WHOIS" -h "$IRR" "$MEMBER" | grep -e "^mnt-by:\|^source:") 
+	if [[ -n "$SOURCE" ]]; then
+		if [ "$DEBUG" == "1" ]; then
+			printf_debug "DEBUG: object SOURCE restricted to $SOURCE"
+		fi
+    	AUT_MNT_IRR_OUT=$("$WHOIS" -h "$IRR" -s "$SOURCE" "$MEMBER" | grep -e "^mnt-by:\|^source:") 
+	else
+		if [ "$DEBUG" == "1" ]; then
+			printf_debug "DEBUG: SOURCE is not set - using all"
+		fi
+    	AUT_MNT_IRR_OUT=$("$WHOIS" -h "$IRR" "$MEMBER" | grep -e "^mnt-by:\|^source:") 
+	fi
     # Check for aut-num mnt-by, accounting for possibility of multiple aut-nums with different mnt-by (and mnt-lower)
     IFS=$' ' read -r -d '' -a AUT_MNT_ARRAY < <(echo "$AUT_MNT_IRR_OUT" | 
 	    awk '/^mnt-by:/ {print $2}' | tr '\n' ' ' && printf '\0') 
@@ -1333,7 +1381,7 @@ process_as_sets() {
 	    printf_debug "DEBUG: <process_aut_nums> MEMBER: $MEMBER"
     fi
 
-	if [ "$INFO" = "1" ]; then			# Print header for INFO
+	if [[ "$INFO" = "1" && "$Is_AsSet" == "1" ]]; then			# Print header for INFO
 		printf "\n"
 	  	printf_info "INFO: Recursing as-set: ["$AS_SET"] mnt-by: ["${ASS_MNT_ARRAY[0]}"] source: ["${ASS_SRC_ARRAY[0]}"]\n"
 	fi	
@@ -1349,7 +1397,7 @@ process_as_sets() {
 	    	fi
     else 
 	    ## OUTPUT
-	    if [ "$WARNING" = "1" ]; then
+	    if [[ "$WARNING" = "1" && "$Is_AsSet" == "1" ]]; then
 			# Too much member!
 	    	printf_warn "+WARNING: Within [as-set $AS_SET]"
 	    	printf_warn "+WARNING:  [member: "$MEMBER"] object found in multiple IRR sources:" 
@@ -1394,9 +1442,16 @@ process_as_sets() {
 
 		    # Get origin: without SOURCE restriction so we can check for overlapping route objects 
 		    # Also strip out RPKI sources we don't care about, at least not currently.  
-		    IFS= IRR_OUT=($("$WHOIS" -h "$IRR" "\!g -i origin "$MEMBER"" | 
-			    grep -e "^route:\|^source:" | 
-			    awk '/^source:/ && /RPKI/ {skip=1; next} skip && /^route:/ {skip=0} /^route:/ {route=$0} /^source:/ && !skip && route != "" {print route; print $0; route=""}')) 
+			if [[ -n "$SOURCE" ]]; then
+		    	IFS= IRR_OUT=($("$WHOIS" -h "$IRR" "\!g -s "$SOURCE" -i origin "$MEMBER"" | 
+			    	grep -e "^route:\|^source:" | 
+			    	awk '/^source:/ && /RPKI/ {skip=1; next} skip && /^route:/ {skip=0} /^route:/ {route=$0} /^source:/ && !skip && route != "" {print route; print $0; route=""}')) 
+			else
+				IFS= IRR_OUT=($("$WHOIS" -h "$IRR" "\!g -i origin "$MEMBER"" | 
+			    	grep -e "^route:\|^source:" | 
+			    	awk '/^source:/ && /RPKI/ {skip=1; next} skip && /^route:/ {skip=0} /^route:/ {route=$0} /^source:/ && !skip && route != "" {print route; print $0; route=""}')) 
+			fi
+
 			if [ "$DEBUG" = "1" ]; then
 				printf_debug "DEBUG: IRR_OUT: ["$IRR_OUT"]"
 			fi
