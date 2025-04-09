@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Function to display the usage information
+usage() {
+    echo "Usage: $0 [-f|--file <file.txt>] [-p|--pipe] <name of prefix-list>"
+    echo "Example: $0 <prefix-list name>"
+    echo "   or"
+    echo "Example: $0 -f prefixes.txt <prefix-list name>"
+    echo "   or"
+    echo "Example: $0 -p <prefix-list name>"
+    echo "Options:"
+    echo "  -f, --file <file.txt>    Specify a file containing prefixes"
+    echo "  -p, --pipe               Specify to read input from pipe"
+    echo "  --help, -?               Show this help message"
+    echo ""
+    echo "One of '-f|--file' or '-p|--pipe' is mandatory."
+    exit 1
+}
+
+# Function to handle the script arguments
+parse_arguments() {
+    # If no arguments are passed or --help/-? is passed, show usage
+    if [[ $# -eq 0 || "$1" =~ ^--(help|\?)$ ]]; then
+        usage
+    fi
+
+    prefix_list_name="PL4-JUNOS-PREFIX-LIST-CHANGE-MY-NAME"
+    file_input=""
+    pipe_input=""
+
+    # Parse options
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -f|--file)
+                # Check if a file is specified and exists
+                if [[ -z "$2" || ! -f "$2" ]]; then
+                    if [[ ! -f "$2" ]]; then
+                        echo "Error: File '$2' not found."
+                    else
+                        echo "Error: Permission denied for '$2'."
+                    fi
+                    usage
+                fi
+                file_input="$2"
+                shift 2
+                ;;
+            -p|--pipe)
+                pipe_input="true"
+                shift
+                ;;
+            *)
+                # Accept the first non-flag argument as the prefix list name
+                prefix_list_name="$1"
+                shift
+                ;;
+        esac
+    done
+
+    # If neither -p nor -f is provided, show usage
+    if [[ -z "$pipe_input" && -z "$file_input" ]]; then
+        usage
+    fi
+
+    # If both -f and -p are passed, show an error and usage
+    if [[ -n "$file_input" && -n "$pipe_input" ]]; then
+        echo "Error: Options -f|--file and -p|--pipe may not be used concurrently."
+        usage
+    fi
+}
+
+# Generate the prefix-list in Junos format
+generate_junos_prefix_list() {
+    local list_name="$1"
+    
+    echo "prefix-list $list_name {"
+    
+    # If file is provided, read from the file, otherwise read from stdin
+    if [[ -n "$file_input" ]]; then
+        # Read prefixes from the file
+        while IFS= read -r prefix; do
+            # Skip empty lines and lines starting with #
+            if [[ -z "$prefix" || "$prefix" =~ ^# ]]; then
+                continue
+            fi
+            # Output each prefix in the Junos format
+            echo "    $prefix;"
+        done < "$file_input"
+    elif [[ -n "$pipe_input" ]]; then
+        # Read prefixes from standard input (pipe)
+        while IFS= read -r prefix; do
+            # Skip empty lines and lines starting with #
+            if [[ -z "$prefix" || "$prefix" =~ ^# ]]; then
+                continue
+            fi
+            # Output each prefix in the Junos format
+            echo "    $prefix;"
+        done
+    fi
+    
+    echo "}"
+}
+
+# Call the argument parser function
+parse_arguments "$@"
+
+# Call the function to generate the prefix list
+generate_junos_prefix_list "$prefix_list_name"
+
