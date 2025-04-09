@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+get_prefixes_from_filter_set() {
+    local setname=$1
+
+    whois -h whois.radb.net "\!g -s RADB $setname" \
+    | awk '/^[[:space:]]*filter:[[:space:]]*{/{flag=1; next} /^[[:space:]]*}/{flag=0} flag' \
+    | sed 's/^[[:space:]]*//; s/[[:space:]]*,*$//' \
+    | sed -E 's|([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+).*|\1|'
+}
+
+get_filter_sets_from_filter_line() {
+    local setname=$1
+
+    whois -h whois.radb.net "\!g -s RADB $setname" \
+    | awk '/^filter:/ {gsub(/^filter:[[:space:]]*/, "", $0); print $0}' \
+    | tr '[:upper:]' '[:lower:]' \
+    | tr -d '()' \
+    | tr ' ' '\n' \
+    | grep -E '^fltr-' \
+    | sort -u
+}
+
+main() {
+    local top_set="fltr-bogons"
+
+    echo "ð Resolving top-level filter-set: $top_set" >&2
+
+    # Step 1: Get referenced sub-filter-sets
+    mapfile -t sub_sets < <(get_filter_sets_from_filter_line "$top_set")
+
+    if [[ ${#sub_sets[@]} -eq 0 ]]; then
+        echo "â ï No sub filter-sets found in $top_set" >&2
+        exit 1
+    fi
+
+    # Step 2: Enumerate prefixes from each referenced set
+    for sub in "${sub_sets[@]}"; do
+        echo "â¡ï Prefixes from: $sub" >&2
+        get_prefixes_from_filter_set "$sub"
+    done
+}
+
+main
+

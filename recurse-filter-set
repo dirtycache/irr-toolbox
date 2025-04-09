@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+# Function to display the usage information
+usage() {
+    echo "Usage: $0 <filter-set-name>"
+    echo "Example: $0 fltr-bogons"
+    exit 1
+}
+
+# Function to get prefixes from a filter-set (this assumes filter: { } block)
+get_prefixes_from_filter_set() {
+    local setname=$1
+
+    whois -h whois.radb.net "\!g -s RADB $setname" \
+    | awk '/^[[:space:]]*filter:[[:space:]]*{/{flag=1; next} /^[[:space:]]*}/{flag=0} flag' \
+    | sed 's/^[[:space:]]*//; s/[[:space:]]*,*$//' \
+    | sed -E 's|([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+).*|\1|'
+}
+
+# Function to get sub filter-sets from the "filter:" line
+get_filter_sets_from_filter_line() {
+    local setname=$1
+
+    whois -h whois.radb.net "\!g -s RADB $setname" \
+    | awk '/^filter:/ {gsub(/^filter:[[:space:]]*/, "", $0); print $0}' \
+    | tr '[:upper:]' '[:lower:]' \
+    | tr -d '()' \
+    | tr ' ' '\n' \
+    | grep -E '^fltr-' \
+    | sort -u
+}
+
+# Main function to start from the top-level filter-set and handle empty filter sets
+main() {
+    # Check if the filter-set name is provided as the first argument
+    if [[ $# -lt 1 ]]; then
+        usage
+    fi
+
+    local top_set="$1"
+    local debug=0
+
+    # Check for debug flag (only if the second argument exists)
+    if [[ "${2:-}" == "--debug" ]]; then
+        debug=1
+    fi
+
+    # Debugging output
+    if (( debug )); then
+        echo "Resolving top-level filter-set: $top_set" >&2
+    fi
+
+    # Step 1: Get referenced sub-filter-sets (including fltr-martian and fltr-unallocated)
+    mapfile -t sub_sets < <(get_filter_sets_from_filter_line "$top_set")
+
+    if [[ ${#sub_sets[@]} -eq 0 ]]; then
+        if (( debug )); then
+            echo "No sub filter-sets found in $top_set" >&2
+        fi
+        exit 1
+    fi
+
+    # Step 2: Check and recurse into fltr-martian and fltr-unallocated, handling empty filters
+    for sub in "${sub_sets[@]}"; do
+        if (( debug )); then
+            echo "Resolving filter-set: $sub" >&2
+        fi
+
+        # Check if filter-set has an empty filter block (i.e., "filter: {}")
+        if [[ "$sub" == "fltr-unallocated" ]]; then
+            # Handle empty filter block gracefully, stop processing this filter-set
+            raw=$(whois -h whois.radb.net "\!g -s RADB $sub")
+            if echo "$raw" | grep -q '^[[:space:]]*filter:[[:space:]]*{}'; then
+                # Stop processing the current filter-set if it has no prefixes
+                if (( debug )); then
+                    echo "$sub has no prefixes (filter: {})" >&2
+                fi
+                continue  # Skip to the next filter-set
+            fi
+        fi
+
+        if [[ "$sub" == "fltr-martian" || "$sub" == "fltr-unallocated" ]]; then
+            get_prefixes_from_filter_set "$sub"
+        fi
+    done
+}
+
+# Start the script by calling main
+main "$@"
