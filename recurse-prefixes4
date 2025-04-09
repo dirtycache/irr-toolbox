@@ -39,6 +39,7 @@ usage() {
 	echo "                                 -i|--info"
 	echo "                                 -w|--warning"
 	echo "                                 -c|--chain"
+	echo "                                 -q|--quiet"
 	echo "                                 --agg"
 	echo "                                 --debug"
 	echo "                                 -h|--help"
@@ -54,6 +55,7 @@ usage() {
     printf "%-30s %-80s \n" "" "Implicitly sets -w|--warning"
     printf "%-30s %-80s \n" "-w|--warning"	"See warnings about possible IRR data issues (without extra output of -i|--info)"
     printf "%-30s %-80s \n" "-c|--chain" "Output IRR data relative to each prefix, e.g., as-set recusion until aut-num for origin"
+    printf "%-30s %-80s \n" "-q|--quiet" "Supress all output which is not an enumerated prefix. Useful for generating prefix-lists"
     printf "%-30s %-80s \n" "--agg"	"Do not output the raw prefix list from the as-set."
 	printf "%-30s %-80s \n" "" "Instead, run it though aggregate6 for prefix aggregation first"
     printf "%-30s %-80s \n" "" "Requires python3 venv and will create one in ./.venv_irr-toolbox"
@@ -896,6 +898,7 @@ AGG_OUTPUT="0"
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         -c|--chain) INFO_CHAIN="1"; shift 1;;
+        -q|--quiet) QUIET="1"; shift 1;;
         -m|--mnt) MY_MNT="$2"; shift 2;;
         -s|--source) SOURCE="$2"; shift 2;;
         -i|--info) INFO=1; shift 1;;
@@ -1665,9 +1668,10 @@ process_as_sets "$AS_SET"
 if [ "$DEBUG" = "1" ]; then
 	printf_debug "DEBUG: end of iteration for processing initial as-set and aut-nums from AS_SET"
 fi
-echo "----"
-echo "Total prefix count (IRR): $irr_prefix_count"
-
-END_TIME=$(date +%s.%N)
-EXEC_TIME=$(echo "$END_TIME - $START_TIME" | bc)
-printf "Script execution time: [%.2f secs]\n" "$EXEC_TIME"
+if [ "$QUIET" = "0" ]; then
+	echo "----"
+	echo "Total prefix count (IRR): $irr_prefix_count"
+	END_TIME=$(date +%s.%N)
+	EXEC_TIME=$(echo "$END_TIME - $START_TIME" | bc)
+	printf "Script execution time: [%.2f secs]\n" "$EXEC_TIME"
+fi
