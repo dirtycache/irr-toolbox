@@ -892,6 +892,7 @@ route_mntby_autnum_mntby_check() {
 #SOURCE="NTTCOM"
 AS_SET="$1"
 DEBUG="0"
+QUIET="0"
 AGG_OUTPUT="0"
 
 # Parse the command line options
