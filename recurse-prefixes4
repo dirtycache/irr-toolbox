@@ -63,7 +63,7 @@ usage() {
     printf "%-30s %-80s \n" "--debug" "Enable script execution debugging - there is a prodigious amount"
     printf "%-30s %-80s \n" "" "of output; use judiciously and don't say we didn't warn you."
     printf "%-30s %-80s \n" "" "Implicitly sets -i|--info and -w|--warning"
-    printf "%-30s %-80s \n" "-h|--help" "# Print this help message and exit"
+    printf "%-30s %-80s \n" "-h|--help" "Print this help message and exit"
     printf "\n"
     exit 1
 }
