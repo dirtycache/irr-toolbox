@@ -192,59 +192,64 @@ is_visited_pfx() {
 
 	# ADD DEBUG	
 	if [ "$DEBUG" = "1" ]; then
-		printf_debug "+DEBUG: is_visited_pfx() $PREFIX - irr_prefix_count: "$irr_prefix_count""
-		printf_inverted "+DEBUG: is_visited_pfx end for $PREFIX"
+		printf_debug "+DEBUG: is_visited_pfx end for $PREFIX"
 	fi
 }
 
 conditional_supression() {
-	# ADD DEBUG
 	if [ "$DEBUG" = "1" ]; then
-		printf_inverted "+DEBUG: conditional_supression() start for $PREFIX"
+		printf_debug "+DEBUG: conditional_supression() start for $PREFIX"
 	fi
+	unset SuppressReason
 	SUPPRESSED="0"
 	RIR_Suppressed="0"
-	if [[ $PREFIX =~ ^44. ]]; then
-		if [ "$INFO" = "1" ]; then
-			printf_info "+INFO: 44net prefix detected, suppressing proxy reg warning because you can't create RIR route objects"
-			printf_info "+INFO: for 44net prefixes and they're often proxy registered for inclusion in filter prefix-lists, which"
-			printf_info "+INFO: is usually done by another mntner in a non-RIR registry"
-		fi
-		SUPPRESSED="1"
-		RIR_Suppressed="1"
-		RIR_ORIGIN="$MEMBER"
-	elif [[ "${ROUTE_MNT[$o]}" = "MAINT-AS20473" && "${ROUTE_SRC[$o]}" = "RADB" ]]; then
-		if [ "$INFO" = "1" ]; then
-			printf_info "+INFO: Suppressing mnt-by mismatch warning because it's Vultr in RADB, and that's just how they do things :("
-		fi
-		SUPPRESSED="1"
+
+	mnt_match=0
+	src_match=0
+
+	for mnt in "${ROUTE_MNT[@]}"; do
+  		if [[ "$mnt" == "MAINT-AS20473" ]]; then
+    		mnt_match=1
+    		break
+  		fi
+	done
+
+	for src in "${ROUTE_SRC[@]}"; do
+  		if [[ "$src" == "RADB" ]]; then
+    		src_match=1
+    		break
+  		fi
+	done
+
+	if [[ $mnt_match -eq 1 && $src_match -eq 1 ]]; then
+  		SUPPRESSED="1"
+		SuppressReason="it's 20473 in RADB, and that's just how they do things :("
 	fi
-	# ADD DEBUG
+	
 	if [ "$DEBUG" = "1" ]; then
-		printf_inverted "+DEBUG: conditonal_supression() end for $PREFIX"
+		printf_debug "+DEBUG: conditonal_supression() end for $PREFIX"
 	fi
 }
 
 is_mask_le_24_warning() {
-	# ADD DEBUG
 	if [ "$DEBUG" = "1" ]; then
-		printf_inverted "+DEBUG: is_mask_le_24_warning() start for $PREFIX"
+		printf_debug "+DEBUG: is_mask_le_24_warning() start for $PREFIX"
 	fi
+	
 	if (( CIDRMASK > 24 )) && [ "$WARNING" = "1" ]; then
 		printf_warn "+WARNING: Mask length >24.  This will not be accepted in global tables and may be inappropriate in filter lists!"
 	elif [ "$INFO" = "1" ]; then
 		printf_info "+INFO: Prefix length $CIDRMASK acceptable for global BGP" 
 	fi
-	#ADD DEBUG
+	
 	if [ "$DEBUG" = "1" ]; then
-		printf_inverted "+DEBUG: is_mask_le_24_warning() end for $PREFIX"
+		printf_debug "+DEBUG: is_mask_le_24_warning() end for $PREFIX"
 	fi
 }
 
 check_bogons() {
-	# ADD DEBUG
 	if [ "$DEBUG" = "1" ]; then
-		printf_inverted "+DEBUG: check_bogons() start for $PREFIX"
+		printf_debug "+DEBUG: check_bogons() start for $PREFIX"
 	fi
 
 	# First, unset IS_BOGON from previous run, if any
@@ -302,9 +307,9 @@ check_bogons() {
 			printf_debug "+ERROR: Bogon status evaluation has failed!"
 		fi
 	fi
-	# ADD DEBUG
+	
 	if [ "DEBUG" = "1" ]; then
-		printf_inverted "+DEBUG: check_bogons() end for $PREFIX\n"
+		printf_debug "+DEBUG: check_bogons() end for $PREFIX\n"
 	fi
 }
 
@@ -349,9 +354,8 @@ is_prefix_in_cidr() {
 ## TODO as_rir_query()
 
 rir_query() {
-	# ADD DEBUG
 	if [ "$DEBUG" = "1" ]; then
-		printf_inverted "+DEBUG: rir_query() start for $PREFIX"
+		printf_debug "+DEBUG: rir_query() start for $PREFIX"
 	fi
 
 	# Clear RIR_ORIGIN from previous run, if any
@@ -376,7 +380,6 @@ rir_query() {
 				printf_debug "+DEBUG: rir_query() iana_whois: [$iana_whois]"
 			fi
 
-            # If the status is RESERVED, set RIR_BOGON=1 and exit immediately
             if [[ $iana_status == "RESERVED" ]]; then
                 printf_inverted "rir_query() IANA status=RESERVED - is bogon"
                 break
@@ -552,12 +555,12 @@ rir_query() {
 	if [[ "$RIR" = "ARIN" && "$RIR_Suppressed" == "0" ]]; then
 		baseNet=${PREFIX%%/*}
 		# Parent CIDR(s)
-		#ARIN_Fetched_CIDR=$(whois -h whois.arin.net $baseNet | awk '/^CIDR:/ {print $2}')
-		#ARIN_Fetched_CIDR=$(whois -h whois.arin.net $baseNet | awk '/^CIDR:/ {gsub(",", " ", $0); for (i=2; i<=NF; i++) print $i}')
 		IFS=', ' read -r -a ARIN_Fetched_CIDR <<< "$(whois -h whois.arin.net $baseNet | awk '/^CIDR:/ {gsub(/^CIDR:\s*/, ""); gsub(/\s+/, " "); sub(/^ */, ""); print $0}')"
 
 		if [ "$WARNING" = "1" ]; then
 			if [ "$INFO" = "1" ]; then
+			# Enumerate ARIN known prefixes for this OrgID
+
 				printf_info "+INFO: Found ${#ARIN_Fetched_CIDR[@]} CIDRs from ARIN query for $baseNet"
 				for i in "${!ARIN_Fetched_CIDR[@]}"; do
 					printf_info "+INFO:  ["$i"] "${ARIN_Fetched_CIDR[$i]}""
@@ -576,9 +579,13 @@ rir_query() {
     			fi
 			done
 		fi
-
+		
 		if [ "$ARIN_Matched_CIDR" != "$PREFIX" ]; then
-			if [ "$WARNING" = "1" ]; then 
+			unset ARIN_ORG_ID
+			if [[ $PREFIX =~ ^44. && "$INFO" = "1" ]]; then
+				printf_info "+INFO: ARIN CIDR mismatch warning suppressed for 44net prefixes"
+				SUPPRESSED="1"
+			elif [ "$WARNING" = "1" ]; then 
 				printf_warn "+WARNING: route: $PREFIX does not match ARIN CIDR: $ARIN_Matched_CIDR"
 				printf_warn "+WARNING: This may be innocuous, such as a longer prefix reassigned from the parent CIDR"
 				printf_warn "+WARNING: which has not been properly reassigned (SWIP) to $MEMBER"
@@ -588,6 +595,7 @@ rir_query() {
 				printf_warn "+WARNING:  2) build filter based upon $ARIN_Matched_CIDR le $CIDRMASK"
 				printf_warn "+WARNING:  3) $ROUTE_MNT delete from IRR this more specific [route: $PREFIX] object" 
 			fi
+
 			if [ "$INFO" = "1" ]; then
 				printf_info "+INFO: Querying ARIN for info of covering CIDR $ARIN_Fetched_CIDR instead of $PREFIX"
 			fi
@@ -601,8 +609,7 @@ rir_query() {
 			if [ -z "$ARIN_NET_NAME" ]; then
 				ARIN_NET_NAME="arin_no_netname_found"
 			fi
-			# OrgId
-			ARIN_ORG_ID=$(whois -h whois.arin.net "r = $ARIN_Fetched_CIDR" | awk '/^OrgId:/ {print $2}')
+			
 			if [ -z "$ARIN_ORG_ID" ]; then
 				ARIN_ORG_ID="arin_no_orgid_found"
 			fi
@@ -652,6 +659,56 @@ rir_query() {
 			printf_info "+INFO: ARIN NetHandle: $ARIN_NET_HANDLE" 
 			printf_info "+INFO: ARIN NetName: $ARIN_NET_NAME" 
 			printf_info "+INFO: ARIN OrgId: $ARIN_ORG_ID"
+			IFS=$'\n' read -r -d '' -a ARIN_OrgID_v4Nets < <(
+				curl -s https://rdap.arin.net/registry/entity/"$ARIN_ORG_ID" | \
+  					awk '
+    					/"v4prefix"/ {
+      					gsub(/"|,/, "", $3)
+      					prefix = $3
+      					is_v4 = 1
+      					next
+    					}
+    					/"length"/ && is_v4 {
+      					gsub(/"|,/, "", $3)
+      					print prefix "/" $3
+      					is_v4 = 0
+    					}
+  						' && printf '\0'
+					)
+			
+			if [ "$DEBUG" = "1" ]; then
+				printf_debug "+DEBUG: Contents of ARIN_OrgID_v4Nets:"
+					for i in "${!ARIN_OrgID_v4Nets[@]}"; do
+  					printf_debug "++[$i] ${ARIN_OrgID_v4Nets[$i]}"
+				done
+			fi
+
+			# Check if the current prefix is in the list of related IPv4 nets from ARIN for the OrgID
+			# when WARNING=1
+			if [ "$WARNING" = "1" ]; then
+				if [ "$DEBUG" = "1" ]; then
+					printf_debug "+DEBUG: Checking if prefix "$PREFIX" is in the ARIN_OrgID_v4Nets array..."
+				fi
+				match_found=0
+				for net in "${ARIN_OrgID_v4Nets[@]}"; do
+  					if [[ "$PREFIX" == "$net" ]]; then
+						if [ "$INFO" = "1" ]; then
+    						printf_info "+INFO: Prefix "$PREFIX" within "$RIR" related nets for org "$ARIN_ORG_ID""
+						fi
+    					match_found=1
+    					break
+  					fi
+				done
+
+				if [[ $match_found -eq 0 ]]; then
+					if [[ $PREFIX =~ ^44. && "$INFO" = "1" ]]; then
+						printf_info "+INFO: ARIN related nets warning suppressed because 44net"
+					else
+  						printf_warn "+WARNING: Prefix "$PREFIX" not found in "$RIR" related nets for org "$ARIN_ORG_ID""
+					fi
+				fi
+			fi
+
 			printf_info "+INFO: ARIN OriginAS: $ARIN_ORIGINAS"
 			if [ "$ARIN_ORIGINAS" = "arin_no_originas_found" ]; then
 					printf_info_bold "+INFO: Cannot determine origin AS from $RIR. Assuming $MEMBER (which could be wrong!)"
@@ -671,7 +728,7 @@ do_output() {
 	fi
 	
 	if [ "$INFO_CHAIN" = "1" ]; then	# Print header for INFO_CHAIN
-		printf "\n"
+		#printf "\n"
 		if [ "$Is_Autnum" == "1" ]; then
 			printf "%s (origin %s)" "$PREFIX" "$MEMBER"
 		else	
@@ -759,30 +816,35 @@ do_output() {
 }
 
 route_qty_check () {
-	# ADD DEBUG
 	if [ "$DEBUG" = "1" ]; then
-		printf_inverted "+DEBUG: route_qty_check() start for $PREFIX"
+		printf_debug "+DEBUG: route_qty_check() start for $PREFIX"
 	fi
+	
 	if [ "$INFO" = "1" ]; then
 			printf_info "+INFO: Found "${#ROUTE_QTY[@]}" [route: $PREFIX] object(s) in IRR. 1 is the optimal quantity"
 			for i in "${!ROUTE_QTY[@]}"; do
 				printf_info "+INFO:  ["$i"] route: $PREFIX source: "${ROUTE_SRC["$i"]}" mnt-by: "${ROUTE_MNT["$i"]}" origin: "${ROUTE_ORIGIN["$i"]}""
 			done
-			if [ "$SUPPRESSED" = "1" ]; then
-				printf_info "+INFO: Suppressed >1 route object warning by rule"
-			fi
 	fi
 
-	# ADD DEBUG
+	if [ "$INFO" = "1" ]; then
+		if (( ${#ROUTE_QTY[@]} > 1 )); then
+			if [ "$SUPPRESSED" = "1" ]; then
+				printf_info "+INFO: Suppressed >1 route object warning by rule: "$SuppressReason""
+			elif [ "$WARNING" = "1" ]; then
+				printf_warn "+WARNING: >1 route: objects seen in IRR for "$PREFIX". This should not typically be the case (but is sometimes neccessary and valid)"
+			fi
+		fi
+	fi
+
 	if [ "$DEBUG" = "1" ]; then
-		printf_inverted "+DEBUG: route_qty_check() end for $PREFIX\n"
+		printf_debug "+DEBUG: route_qty_check() end for $PREFIX\n"
 	fi
 }
 
 route_origin_irr_check() {
-	# ADD DEBUG
 	if [ "$DEBUG" = "1" ]; then
-		printf_inverted "+DEBUG: route_origin_irr_check() start for $PREFIX"
+		printf_debug "+DEBUG: route_origin_irr_check() start for $PREFIX"
 		printf_debug "+DEBUG: SUPPRESSED: ["$SUPPRESSED"]"
 	fi
 	# COLLAPSE TO PREVIOUS
@@ -874,8 +936,7 @@ route_mntby_autnum_mntby_check() {
 					printf_info_bold "++INFO: Crown Castle (AS27506,AS46887) is a known promulgator of IRR bullshit under this mntner"
 					printf_info_bold "++INFO: specifying their customer as origin AS rather than adding customer as-sets to AS-CCF."
 					printf_info_bold "++INFO: Contact <fiberProvAM@crowncastle.com> for removal and advise the technician to review ticket# CCF22489011"
-					printf_info_bold "But make sure that CCF adds members: <your as-set> to AS-CCF first!"
-					printf_info_bold "While you are pestering them, convince them to add remarks: Level3 members: for...well, everything."
+					printf_info_bold "++INFO: But make sure that CCF adds members: <your as-set> to AS-CCF first!"
 				fi
 			fi
 		fi
@@ -1336,7 +1397,8 @@ process_as_sets() {
 		MEMBERS="$as_set"
 	fi
 
-    current_as_set_chain="${AS_SET_STACK[*]}"
+    #current_as_set_chain="${AS_SET_STACK[*]}"
+    current_as_set_chain="${AS_SET_STACK[@]}"
 	if [ "$DEBUG" = "1" ]; then
 		if [ -z "${current_as_set_chain+x}" ]; then
 			printf_debug "DEBUG: process_as_sets()> current_as_set_chain is unset"
