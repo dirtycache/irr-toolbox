@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+DEBUG="0"
+OUTPUT="1"
+
+#if [ -z $1 ]; then
+# echo "Usage: This script generates a VyOS prefix-list6 from the prefixes found in:"
+# echo "https://team-cymru.org/Services/Bogons/fullbogons-ipv6.txt"
+# echo " "
+# exit 1
+#fi
+
+PL6NAME="PL6-FULLBOGONS"
+
+PREFIXES=$(curl -s https://team-cymru.org/Services/Bogons/fullbogons-ipv6.txt | grep -v "^#")
+ RULENUM=10
+ echo "configure"
+ echo "delete policy prefix-list6 $PL6NAME"
+ while read PREFIX; do 
+        echo "set policy prefix-list $PL6NAME rule $RULENUM action permit"  
+        echo "set policy prefix-list $PL6NAME rule $RULENUM prefix $PREFIX" 
+        echo "set policy prefix-list $PL6NAME rule $RULENUM le 128"
+        RULENUM=$((RULENUM+10))
+ done <<< "$PREFIXES"
+ echo "commit"
+ echo "save"
+ echo "exit"

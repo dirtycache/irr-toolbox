@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+DEBUG="0"
+OUTPUT="1"
+
+if [ -z $1 ]; then
+ echo "Usage: Please specify the name of the filter-set you wish to enumerate, typically 'fltr-bogons'"
+ echo " "
+ exit 1
+fi
+
+PL4NAME="PL4-IRR-$1"
+if [ "$DEBUG" == "1" ]; then
+	echo "arg1 $1"
+  	echo "pl4name: $PL4NAME"
+fi
+
+PREFIXES=$(./recurse-filter-set fltr-bogons)
+ RULENUM=10
+ echo "configure"
+ echo "delete policy prefix-list $PL4NAME"
+ while read PREFIX; do 
+        echo "set policy prefix-list $PL4NAME rule $RULENUM action permit"  
+        echo "set policy prefix-list $PL4NAME rule $RULENUM prefix $PREFIX" 
+        echo "set policy prefix-list $PL4NAME rule $RULENUM le 32"
+        RULENUM=$((RULENUM+10))
+ done <<< "$PREFIXES"
+ echo "commit"
+ echo "save"
+ echo "exit"
