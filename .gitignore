@@ -1,3 +1,4 @@
 prefixes.txt
-bogon*
+bogon-bn-agg.txt
+bogon-bn-nonagg.txt
 .venv_irr-toolbox
