@@ -73,12 +73,14 @@ if [ "$OUTPUT" == "1" ]; then
  echo "configure"
  echo "delete policy prefix-list $PL4NAME"
  while read PREFIX; do 
-        echo "set policy prefix-list $PL4NAME rule $RULENUM action permit"  
-        echo "set policy prefix-list $PL4NAME rule $RULENUM prefix $PREFIX" 
-        echo "set policy prefix-list $PL4NAME rule $RULENUM le 24"
+    LEN="${PREFIX##*/}"
+    if [ "$LEN" -le 24 ]; then
+        echo "set policy prefix-list $PL4NAME rule $RULENUM action permit"
+        echo "set policy prefix-list $PL4NAME rule $RULENUM prefix $PREFIX"
         RULENUM=$((RULENUM+10))
- done <<< "$PREFIXES"
- echo "commit"
+    fi
+done <<< "$PREFIXES"
+echo "commit"
  echo "save"
  echo "exit"
 fi
