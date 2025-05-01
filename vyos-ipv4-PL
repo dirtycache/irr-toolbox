@@ -83,7 +83,6 @@ while read PREFIX; do
         RULENUM=$((RULENUM+10)) 
     fi
 done <<< "$PREFIXES"
-done <<< "$PREFIXES"
 echo "commit"
  echo "save"
  echo "exit"
