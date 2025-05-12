@@ -26,7 +26,8 @@ START_TIME=$(date +%s.%N)
 # Usage function to display help message
 usage() {
     echo " "
-    echo "irr-toolbox:recurse-prefixes4 - examine IPv4 prefixes from IRR aut-num or as-set objects"
+    echo "irr-toolbox:enumerate_as-set_prefixes - list prefixes from IRR aut-num or as-set objects"
+    echo "ONLY IPv4 WORKS RIGHT NOW"
     echo " "
     echo "Recurse a given as-set object through member aut-nums and member as-sets which themselves contain."
     echo "aut-nums, until the end-of-recursion aut-num is reached. Query aut-num objects for originated prefixes."
@@ -98,14 +99,14 @@ reset="\e[0m"
 BOGONDB=()
 while IFS= read -r bogondb_line; do
     BOGONDB+=("$bogondb_line")
-done < "bogon-bn-nonagg.txt"
+done < "data/cymru/bogon-bn-nonagg.txt"
 ## BOGONDB END
 
 ## IANA_DB START
 
 # Initialize the IANA_DB array to store the processed records
 IANA_DB=()
-IANA_SRC_FILE="IANA-ipv4-address-space.txt"
+IANA_SRC_FILE="data/iana/IANA-ipv4-address-space.txt"
 
 # Use grep to filter lines matching the prefix pattern, then pipe to while
 while IFS= read -r line; do
@@ -138,7 +139,7 @@ done < <(grep -E '^[[:space:]]*[0-9]{1,3}/8' "$IANA_SRC_FILE")
 # WIP
 
 IANA_ASN_DB=()
-IANA_ASN_SRC_FILE="IANA-as-numbers.txt"
+IANA_ASN_SRC_FILE="data/iana/IANA-as-numbers.txt"
 
 ## AUTNUM_DB END
 
