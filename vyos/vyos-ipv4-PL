@@ -68,22 +68,46 @@ if [ "$OUTPUT" == "0" ]; then
 fi
 
 if [ "$OUTPUT" == "1" ]; then
- PREFIXES=$(whois -h filtergen.dan.me.uk "!g -RADB $AS_SET" | grep -v %)
- RULENUM=10
- echo "configure"
- echo "delete policy prefix-list $PL4NAME"
+#PREFIXES=$(whois -h filtergen.dan.me.uk "!g -RADB $AS_SET" | grep -v %)
+PREFIXES=$(~/irr-toolbox/enumerate_as-set_prefixes "$AS_SET" -q)
+tmp_output=$(mktemp)
 while read PREFIX; do
+    PFX_ORIG=$(whois -h whois.arin.net "r = $PREFIX" | awk -F': *' '/^OriginAS:/ {print $2; exit}')
+    [[ -z "$PFX_ORIG" ]] && PFX_ORIG="arin_no_originas_found"
+
     LEN="${PREFIX##*/}"
     if [ "$LEN" -le 24 ]; then
-        echo "set policy prefix-list $PL4NAME rule $RULENUM action permit"
-        echo "set policy prefix-list $PL4NAME rule $RULENUM prefix $PREFIX"
-        if [ "$LEN" -lt 24 ]; then
-            echo "set policy prefix-list $PL4NAME rule $RULENUM le 24"
-        fi
-        RULENUM=$((RULENUM+10)) 
+        {
+            echo "$PFX_ORIG|$PREFIX|action permit"
+            echo "$PFX_ORIG|$PREFIX|prefix $PREFIX"
+            echo "$PFX_ORIG|$PREFIX|description \"$PFX_ORIG\""
+            [[ "$LEN" -lt 24 ]] && echo "$PFX_ORIG|$PREFIX|le 24"
+        } >> "$tmp_output"
     fi
 done <<< "$PREFIXES"
+
+echo "configure"
+echo "delete policy prefix-list $PL4NAME"
+RULENUM=10
+sort -t'|' -k1,1 -k2,2V "$tmp_output" | \
+awk -F'|' -v plname="$PL4NAME" -v rulenum_start=10 '
+BEGIN {
+    rule = rulenum_start
+    prev_key = ""
+}
+{
+    key = $1 "|" $2
+    if (key != prev_key) {
+        rule_num = rule
+        rule += 10
+        prev_key = key
+    }
+    printf "set policy prefix-list %s rule %d %s\n", plname, rule_num, $3
+}
+'
+
+rm -f "$tmp_output"
 echo "commit"
- echo "save"
- echo "exit"
+echo "save"
+echo "exit"
 fi

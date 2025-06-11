@@ -40,6 +40,7 @@ usage() {
 	echo "                                 -i|--info"
 	echo "                                 -w|--warning"
 	echo "                                 -c|--chain"
+	echo "                                 --pl-vyos"
 	echo "                                 -q|--quiet"
 	echo "                                 --agg"
 	echo "                                 --debug"
@@ -56,7 +57,8 @@ usage() {
     printf "%-30s %-80s \n" "" "Implicitly sets -w|--warning"
     printf "%-30s %-80s \n" "-w|--warning"	"See warnings about possible IRR data issues (without extra output of -i|--info)"
     printf "%-30s %-80s \n" "-c|--chain" "Output IRR data relative to each prefix, e.g., as-set recusion until aut-num for origin"
-    printf "%-30s %-80s \n" "-q|--quiet" "Supress all output which is not an enumerated prefix. Useful for generating prefix-lists"
+    printf "%-30s %-80s \n" "--pl-vyos" "Output config snippet for VyOS prefix list"
+    printf "%-30s %-80s \n" "-q|--quiet" "Supress all output which is not an enumerated prefix." 
     printf "%-30s %-80s \n" "--agg"	"Do not output the raw prefix list from the as-set."
 	printf "%-30s %-80s \n" "" "Instead, run it though aggregate6 for prefix aggregation first"
     printf "%-30s %-80s \n" "" "Requires python3 venv and will create one in ./.venv_irr-toolbox"
@@ -148,23 +150,23 @@ IANA_ASN_SRC_FILE="data/iana/IANA-as-numbers.txt"
 #### BEGIN SECTION: BASH FUNCTIONS
 
 printf_debug() {
-	printf "${white}$1${reset}\n"
+    printf "${white}%s${reset}\n" "$1"
 }
 
 printf_info() {
-	printf "${yellow}$1${reset}\n"
+    printf "${yellow}%s${reset}\n" "$1"
 }
 
 printf_info_bold () {
-	printf "${yellow}${bold}$1${reset}\n"
+    printf "${yellow}${bold}%s${reset}\n" "$1"
 }
 
 printf_warn() {
-	printf "${red_bg_bold_white}$1${reset}\n"
+    printf "${red_bg_bold_white}%s${reset}\n" "$1"
 }
 
 printf_inverted() {
-	printf "${inverted}$1${reset}\n"
+    printf "${inverted}%s${reset}\n" "$1"
 }
 
 is_visited_pfx() {
@@ -723,7 +725,6 @@ rir_query() {
 }
 
 do_output() {
-	# ADD DEBUG
 	if [ "$DEBUG" = "1" ]; then
 		printf_inverted "+DEBUG: do_output() start for $PREFIX"
 	fi
@@ -733,11 +734,14 @@ do_output() {
 		if [ "$Is_Autnum" == "1" ]; then
 			printf "%s (origin %s)" "$PREFIX" "$MEMBER"
 		else	
-			printf "%s (enumerated from %s %s)" "$PREFIX" "$current_as_set_chain" "$MEMBER"
+			printf "%s via %s %s" "$PREFIX" "$current_as_set_chain" "$MEMBER"
 		fi
 		printf "\n"
 	elif [ "$WARNING" = "1" ]; then		# Print header for WARNING
 		printf "\n$PREFIX\n"
+	#elif [ "$PL_VYOS" = "1" ]; then
+	#	echo "calling output_vyos for $PREFIX"
+	#	output_vyos
 	else								# Normal output when INFO|INFO_CHAIN|WARNING are false
 		OUTPUT_PREFIX=$(echo "$KVP" | awk '{print $1}')	
 		printf "$PREFIX\n"
@@ -948,12 +952,39 @@ route_mntby_autnum_mntby_check() {
 	fi
 }	
 
+output_vyos() {
+AS_SET_DASH=$(echo $AS_SET | tr ':' '-')
+PL4NAME="PL4-IRR-$REG--$AS_SET_DASH"
+RULENUM=10
+echo "configure"
+echo "delete policy prefix-list $PL4NAME"
+for PREFIX in "${PREFIXES[@]}"; do	
+    PFX_ORIG=$(whois -h whois.arin.net "r = $PREFIX" | awk -F': *' '/^OriginAS:/ {print $2; exit}')
+    [[ -z "$PFX_ORIG" ]] && PFX_ORIG="arin_no_originas_found"
+	LEN="${PREFIX##*/}"
+    if [ "$LEN" -le 24 ]; then
+		echo "set policy prefix-list $PL4NAME rule $RULENUM action permit"
+        echo "set policy prefix-list $PL4NAME rule $RULENUM prefix $PREFIX"
+        echo "set policy prefix-list $PL4NAME rule $RULENUM description \"$PFX_ORIG\""
+        if [ "$LEN" -lt 24 ]; then
+            echo "set policy prefix-list $PL4NAME rule $RULENUM le 24"
+        fi
+        RULENUM=$((RULENUM+10)) 
+    fi
+done <<< "$PREFIXES"
+echo "commit"
+echo "save"
+echo "exit"
+}
+
 #### END SECTION: BASH FUNCTIONS
 
 ## defaults for input variables
 #SOURCE="NTTCOM"
+REG="RADB"
 AS_SET="$1"
 DEBUG="0"
+PL_VYOS="0"
 QUIET="0"
 AGG_OUTPUT="0"
 
@@ -961,6 +992,7 @@ AGG_OUTPUT="0"
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         -c|--chain) INFO_CHAIN="1"; shift 1;;
+        --pl-vyos) PL_VYOS="1"; shift 1;;
         -q|--quiet) QUIET="1"; shift 1;;
         -m|--mnt) MY_MNT="$2"; shift 2;;
         -s|--source) SOURCE="$2"; shift 2;;
@@ -1222,33 +1254,38 @@ ASS_EXIST_COUNT=0
 
 process_as_sets() {
     local as_set="$1"
-	# Parse the given as-set and figure out if it's an as-set or an aut-num
-	if [[ "$as_set" =~ ^[Aa][Ss][0-9]{1,}$ ]]; then
-		# ADD DEBUG
-		if [ "$DEBUG" == "1" ]; then
-    		printf_debug "$AS_SET is an aut-num"
-		fi
-		Is_AsSet="0"
-		Is_Autnum="1"
-	elif [[ "$AS_SET" =~ ^[Aa][Ss][0-9]{1,}:[Aa][Ss]-.*$ ]]; then
-		# ADD DEBUG
-		if [ "$DEBUG" == "1" ]; then
-    		printf_debug "$AS_SET is an as-set with an aut-num prefix"
-		fi
-		Is_AsSet="1"
-		Is_Autnum="0"
-	elif [[ "$AS_SET" =~ ^[Aa][Ss]-.*$ ]]; then
-		# ADD DEBUG
-		if [ "$DEBUG" == "1" ]; then
-    		printf_debug "$AS_SET is an as-set without an aut-num prefix"
-		fi
-		Is_AsSet="1"
-		Is_Autnum="0"
-	else
-		if [ "$DEBUG" == "1" ]; then
-    		printf_debug "$AS_SET does not match any recognized pattern" && usage
-		fi
-	fi
+    
+    # Detect and extract IRR registry source if present 
+    if [[ "$as_set" =~ ^([a-zA-Z0-9]+)::(.+)$ ]]; then
+        REG="${BASH_REMATCH[1]^^}"  # Force uppercase
+        AS_SET="${BASH_REMATCH[2]}"
+        [[ "$DEBUG" == "1" ]] && printf_debug "DEBUG: Detected in-line IRR reg: $REG"
+        [[ "$DEBUG" == "1" ]] && printf_debug "DEBUG: Stripped AS_SET: $AS_SET"
+    else
+        AS_SET="$as_set"
+        [[ "$DEBUG" == "1" ]] && printf_debug "DEBUG: No in-line IRR reg detected"
+    fi
+
+    # Classify AS_SET
+    if [[ "$AS_SET" =~ ^[Aa][Ss][0-9]{1,}$ ]]; then
+        [[ "$DEBUG" == "1" ]] && printf_debug "DEBUG: $AS_SET is an aut-num"
+        Is_AsSet="0"
+        Is_Autnum="1"
+    elif [[ "$AS_SET" =~ ^[Aa][Ss][0-9]{1,}:[Aa][Ss]-.*$ ]]; then
+        [[ "$DEBUG" == "1" ]] && printf_debug "DEBUG: $AS_SET is an as-set with an aut-num prefix"
+        Is_AsSet="1"
+        Is_Autnum="0"
+    elif [[ "$AS_SET" =~ ^[Aa][Ss]-.*$ ]]; then
+        [[ "$DEBUG" == "1" ]] && printf_debug "DEBUG: $AS_SET is an as-set without an aut-num prefix"
+        Is_AsSet="1"
+        Is_Autnum="0"
+    else
+        [[ "$DEBUG" == "1" ]] && printf_debug "DEBUG: $AS_SET does not match any recognized pattern"
+        usage
+    fi
+
+    export AS_SET
+    export REG
 
     if [ "$DEBUG" = "1" ]; then
         printf_debug "DEBUG: process_as_sets()> start for processing AS-SET: ["$AS_SET"]"
@@ -1266,7 +1303,6 @@ process_as_sets() {
 		fi
     fi
 
-    local AS_SET="$1"
     # Push the current AS-SET onto the stack
     AS_SET_STACK+=("$AS_SET")
 	if [ "$DEBUG" = "1" ]; then
@@ -1276,14 +1312,10 @@ process_as_sets() {
     ASS_EXISTS_COUNT=0
     if [ "$DEBUG" = "1" ]; then
 	    printf_debug "DEBUG: process_as_sets()> Generating ASS_IRR_OUT for "$AS_SET" against "$IRR""
-	    printf_debug "DEBUG: process_as_sets()> "$WHOIS" -h "$IRR" [-s "$SOURCE"] "$AS_SET""
+	    printf_debug "DEBUG: process_as_sets()> "$WHOIS" -h "$IRR" "$AS_SET""
     fi
     
-	if [[ -n "$SOURCE" ]]; then
-		ASS_IRR_OUT=$("$WHOIS" -h "$IRR" -s "$SOURCE" "$AS_SET")
-	else
-    	ASS_IRR_OUT=$("$WHOIS" -h "$IRR" "$AS_SET")
-	fi
+    ASS_IRR_OUT=$("$WHOIS" -h "$IRR" "$AS_SET")
 
     IFS=$' ' read -r -d '' -a ASS_MNT_ARRAY < <(echo "$ASS_IRR_OUT" |
 	    awk '/^mnt-by:/ {print $2}' |
@@ -1634,6 +1666,8 @@ process_as_sets() {
 							# OUTPUT
 							if [ "${VISITED_PFX["$PREFIX"]}" = "true" ]; then	
 								continue
+							elif [ "$PL_VYOS" = "1" ]; then
+								continue
 							elif [ "${VISITED_PFX["$PREFIX"]}" = "false" ]; then 
 								CIDRMASK="${PREFIX##*/}"
 								do_output
@@ -1732,6 +1766,7 @@ process_as_sets "$AS_SET"
 if [ "$DEBUG" = "1" ]; then
 	printf_debug "DEBUG: end of iteration for processing initial as-set and aut-nums from AS_SET"
 fi
+
 if [ "$QUIET" = "0" ]; then
 	echo "----"
 	echo "Total prefix count (IRR): $irr_prefix_count"
