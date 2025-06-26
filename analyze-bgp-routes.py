@@ -229,9 +229,18 @@ def main():
     api_key = get_api_key(router)
 
     print(f"\n")
-    print(f">> Connecting to {router}: get system ASN...")
-    local_asn = int(get_local_asn(router, api_key, verify_ssl))
+    #print(f">> Connecting to {router}: get system ASN...")
+    #local_asn = int(get_local_asn(router, api_key, verify_ssl))
+    #print(f">> {router} system ASN is {local_asn}")
+    print(f">> Connecting to {router} to retrieve local ASN via API...")
+    local_asn_str = get_local_asn(router, api_key, verify_ssl)
+    try:
+        local_asn = int(local_asn_str)
+    except ValueError:
+        print(f"FATAL: Could not determine system ASN. Usually due to self-signed SSL cert; try running with -k")
+        sys.exit(1)
     print(f">> {router} system ASN is {local_asn}")
+
 
     print(f">> Connecting to {router} to gather BGP IPv4 summary...")
     summary = get_bgp_summary(router, api_key, verify_ssl)
