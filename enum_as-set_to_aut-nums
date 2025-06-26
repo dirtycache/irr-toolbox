@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+EXTENDED=0; DEBUG=0
+MY_ASN=""
+declare -A VISITED
+declare -A MNT_BY_CACHE
+declare -a ANCESTRY
+
+usage() {
+  echo "Usage: $0 [-e|--explore] [-m|--my-asn <ASN>] [--debug] <AS-SET>"
+  exit 1
+}
+
+logd() { ((DEBUG)) && echo "DEBUG: $*"; }
+
+normalize() {
+  echo "$1" | tr '[:lower:]' '[:upper:]'
+}
+
+get_mnt() {
+  local obj="$1" type="$2"
+  obj=$(normalize "$obj")
+  [[ -n "${MNT_BY_CACHE[$obj]:-}" ]] && { echo "${MNT_BY_CACHE[$obj]}"; return; }
+  local val
+  val=$(whois -h rr.ntt.net "$obj" 2>/dev/null \
+    | awk -v t="$type" 'BEGIN{IGNORECASE=1} /^mnt-by:/ {print $2; exit}')
+  MNT_BY_CACHE[$obj]="$val"
+  echo "$val"
+}
+
+resolve() {
+  local asset="$1" depth="$2" parent_mnt="$3" parent_asn="$4"
+  asset=$(normalize "$asset")
+
+  [[ -n "${VISITED[$asset]:-}" ]] && return
+  VISITED[$asset]=1
+
+  ANCESTRY+=( "$asset" )
+
+  local cur_mnt
+  cur_mnt=$(get_mnt "$asset" "as-set")
+
+  if (( depth == 1 )); then
+    parent_mnt="$cur_mnt"
+    parent_asn="${asset%%:*}"; parent_asn="${parent_asn#AS}"
+    [[ "$parent_asn" =~ ^[0-9]+$ ]] || parent_asn=""
+  fi
+
+  local mems
+  mems=$(whois -h rr.ntt.net "$asset" 2>/dev/null \
+    | awk -F': ' '/^members:/ {
+        gsub(/^[ \t]+|[ \t]+$/, "", $2);
+        gsub(/,[ \t]*/, "\n", $2);
+        print $2
+      }')
+
+  while IFS= read -r mbr; do
+    [[ -z "$mbr" ]] && continue
+    mbr=$(normalize "$mbr")
+
+    if [[ "$mbr" =~ ^AS[0-9]+$ ]]; then
+      local asn="${mbr#AS}"
+      local mnt
+      mnt=$(get_mnt "$mbr" "aut-num")
+
+      if (( EXTENDED )); then
+        echo "$(IFS=' -> '; echo "${ANCESTRY[*]} -> $mbr")"
+      else
+        if [[ "$mnt" != "$parent_mnt" && "$parent_asn" =~ ^[0-9]+$ ]]; then
+          if [[ "$parent_asn" == "$MY_ASN" ]]; then
+            echo "$asn"
+          else
+            echo "${parent_asn}_${asn}"
+          fi
+        else
+          echo "$asn"
+        fi
+      fi
+
+    elif [[ "$mbr" =~ ^AS[A-Z0-9._-]+(:.*)?$ ]]; then
+      local mnt2
+      mnt2=$(get_mnt "$mbr" "as-set")
+      local new_parent_asn="$parent_asn"
+      local new_parent_mnt="$parent_mnt"
+
+      if (( depth == 1 )); then
+        new_parent_mnt="$mnt2"
+        new_parent_asn="${mbr%%:*}"; new_parent_asn="${new_parent_asn#AS}"
+        [[ "$new_parent_asn" =~ ^[0-9]+$ ]] || new_parent_asn=""
+      elif [[ "$mbr" =~ ^AS([0-9]+): ]]; then
+        new_parent_mnt="$mnt2"
+        new_parent_asn="${BASH_REMATCH[1]}"
+      fi
+
+      resolve "$mbr" $((depth+1)) "$new_parent_mnt" "$new_parent_asn"
+    fi
+  done <<< "$mems"
+
+  unset 'ANCESTRY[-1]'
+}
+
+# Main
+while (( $# )); do
+  case "$1" in
+    -e|--explore) EXTENDED=1 ;;
+    --debug) DEBUG=1 ;;
+    -m|--my-asn)
+      shift
+      [[ $# -eq 0 ]] && usage
+      MY_ASN="${1#AS}"
+      ;;
+    -h|--help) usage ;;
+    *) break ;;
+  esac
+  shift
+done
+
+[[ $# -ne 1 ]] && usage
+resolve "$1" 0 "" ""

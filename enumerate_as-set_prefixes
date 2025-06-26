@@ -76,6 +76,8 @@ if [ $# -eq 0 ]; then
     usage
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 ## Colors and Backgrounds
 
 red="\e[0;91m"
@@ -101,14 +103,14 @@ reset="\e[0m"
 BOGONDB=()
 while IFS= read -r bogondb_line; do
     BOGONDB+=("$bogondb_line")
-done < "data/cymru/bogon-bn-nonagg.txt"
+done < "$SCRIPT_DIR/data/cymru/bogon-bn-nonagg.txt"
 ## BOGONDB END
 
 ## IANA_DB START
 
 # Initialize the IANA_DB array to store the processed records
 IANA_DB=()
-IANA_SRC_FILE="data/iana/IANA-ipv4-address-space.txt"
+IANA_SRC_FILE="$SCRIPT_DIR/data/iana/IANA-ipv4-address-space.txt"
 
 # Use grep to filter lines matching the prefix pattern, then pipe to while
 while IFS= read -r line; do
@@ -141,7 +143,7 @@ done < <(grep -E '^[[:space:]]*[0-9]{1,3}/8' "$IANA_SRC_FILE")
 # WIP
 
 IANA_ASN_DB=()
-IANA_ASN_SRC_FILE="data/iana/IANA-as-numbers.txt"
+IANA_ASN_SRC_FILE="$SCRIPT_DIR/data/iana/IANA-as-numbers.txt"
 
 ## AUTNUM_DB END
 

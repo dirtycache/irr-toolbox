@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+
+IRR_ENUM="${HOME}/irr-toolbox/enumerate_as-set_prefixes"
+
+usage() {
+    echo "Usage: $0 -m <mode> -a <AS-SET> [-s <IRR_SOURCE>] [-f <prefix_file>]"
+    echo "  -m, --mode        Mode of operation: raw, pdb, or file (required)"
+    echo "  -a, --as-set      AS-SET name (required for raw/pdb modes)"
+    echo "  -s, --source      IRR source (only for raw mode)"
+    echo "  -f, --file        Path to file with prefixes (only for file mode)"
+    exit 1
+}
+
+# Initialize
+MODE=""
+AS_SET=""
+IRR_SOURCE=""
+PREFIX_FILE=""
+RULE=10
+PREFIXES=()
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -m|--mode)
+            MODE="$2"
+            shift 2
+            ;;
+        -a|--as-set)
+            AS_SET="$2"
+            shift 2
+            ;;
+        -s|--source)
+            IRR_SOURCE="$2"
+            shift 2
+            ;;
+        -f|--file)
+            PREFIX_FILE="$2"
+            shift 2
+            ;;
+        -*)
+            echo "Unknown option: $1"
+            usage
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+if [[ -z "$MODE" ]]; then
+    echo "Error: -m|--mode is required"
+    usage
+fi
+
+if [[ "$MODE" == "raw" || "$MODE" == "pdb" ]]; then
+    if [[ -z "$AS_SET" ]]; then
+        echo "Error: -a|--as-set is required in mode $MODE"
+        usage
+    fi
+elif [[ "$MODE" == "file" ]]; then
+    if [[ -z "$PREFIX_FILE" ]]; then
+        echo "Error: -f|--file is required in file mode"
+        usage
+    fi
+    if [[ -z "$AS_SET" ]]; then
+        read -rp "Enter name of AS-SET: " AS_SET
+    fi
+else
+    echo "Error: Invalid mode: $MODE"
+    usage
+fi
+
+# Sanity check and load prefixes
+if [[ "$MODE" == "file" ]]; then
+    echo "Validating prefixes file..."
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%%[[:space:]]#*}"   # Strip trailing comments
+        line="${line%%#*}"
+        line="${line//[$'\t\r\n ']}"
+        [[ -z "$line" ]] && continue
+
+        if [[ "$line" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]]; then
+            IFS='/' read -r ip mask <<< "$line"
+            IFS='.' read -r o1 o2 o3 o4 <<< "$ip"
+            if (( o1 == 0 )); then
+                echo "Error: Invalid IPv4 prefix in 0.0.0.0/8: $line"
+                exit 1
+            elif (( mask < 1 || mask > 32 )); then
+                echo "Error: Invalid IPv4 prefix length in line: $line"
+                exit 1
+            elif (( mask > 24 )); then
+                echo "Non-Fatal Error: Too long IPv4 prefix length in line: $line"
+            fi
+            PREFIXES+=("$line")
+        elif [[ "$line" =~ ^([0-9a-fA-F:]+:+)+[0-9a-fA-F]*/([0-9]{1,3})$ ]]; then
+            mask="${line##*/}"
+            if (( mask < 1 || mask > 128 )); then
+                echo "Error: Invalid IPv6 prefix length in line: $line"
+                exit 1
+            elif (( mask > 48 )); then
+                echo "Non-Fatal Error: Too long IPv6 prefix length in line: $line"
+                echo "This will be included in your prefix-list but probably should not be in IRR to begin with."
+            fi
+            PREFIXES+=("$line")
+        else
+            echo "Error: Invalid line in prefix file: $line"
+            exit 1
+        fi
+    done < "$PREFIX_FILE"
+    echo "File validation complete!"
+elif [[ "$MODE" == "raw" ]]; then
+    mapfile -t PREFIXES < <("$IRR_ENUM" "$AS_SET" -q ${IRR_SOURCE:+-s "$IRR_SOURCE"})
+elif [[ "$MODE" == "pdb" ]]; then
+    mapfile -t PREFIXES < <("$IRR_ENUM" "$AS_SET" -p)
+fi
+
+if [[ "${#PREFIXES[@]}" -eq 0 ]]; then
+    echo "Error: No prefixes found or returned."
+    exit 1
+fi
+
+# Detect IPv6 vs IPv4
+if [[ "${PREFIXES[0]}" == *:* ]]; then
+    PL_TYPE="6"
+else
+    PL_TYPE="4"
+fi
+
+PL_NAME="PL${PL_TYPE}-IRR"
+[[ -n "$IRR_SOURCE" ]] && PL_NAME="${PL_NAME}-${IRR_SOURCE}"
+PL_NAME="${PL_NAME}--${AS_SET//[:]/-}"
+
+# Emit VyOS config
+#echo "configure"
+echo "delete policy prefix-list${PL_TYPE} $PL_NAME"
+
+for prefix in "${PREFIXES[@]}"; do
+    mask="${prefix##*/}"
+    if [[ "$prefix" == *:* ]]; then
+        # IPv6
+        echo "set policy prefix-list6 $PL_NAME rule $RULE action permit"
+        (( mask < 48 )) && echo "set policy prefix-list6 $PL_NAME rule $RULE le 48"
+        echo "set policy prefix-list6 $PL_NAME rule $RULE prefix $prefix"
+    else
+        # IPv4
+        echo "set policy prefix-list $PL_NAME rule $RULE action permit"
+        (( mask < 24 )) && echo "set policy prefix-list $PL_NAME rule $RULE le 24"
+        echo "set policy prefix-list $PL_NAME rule $RULE prefix $prefix"
+    fi
+    RULE=$((RULE + 10))
+done
