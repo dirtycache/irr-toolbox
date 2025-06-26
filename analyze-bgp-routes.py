@@ -15,28 +15,28 @@ if "INSIDE_VENV" not in os.environ:
         import requests
         import urllib3
     except ImportError:
-        print("Python module import 'requests' r 'urllib3' failed, so punting to venv")
-        venv_path = os.path.expanduser("~/.venv_tmp_irr-toolbox_anal_recv")
+        print("INFO: Python module import 'requests' or 'urllib3' failed, so punting to venv")
+        venv_path = os.path.expanduser("~/.venv_irr-toolbox")
         if os.path.exists(venv_path):
             age = time.time() - os.path.getmtime(venv_path)
             if age < 3600:
-                print("Using existing virtual environment...")
+                print("INFO: Using existing virtual environment: {venv_path}")
             else:
-                print("Removing old venv...")
+                print("INFO: Removing old venv {venv_path}")
                 subprocess.run(["rm", "-rf", venv_path])
             if not os.path.exists(venv_path):
-                print(f"Creating new virtual environment at {venv_path} ...")
+                print(f"INFO: Creating new virtual environment at {venv_path} ")
                 subprocess.run([sys.executable, "-m", "venv", venv_path])
                 subprocess.run([f"{venv_path}/bin/pip", "install", "--upgrade", "pip", "setuptools"])
                 subprocess.run([f"{venv_path}/bin/pip", "install", "requests", "urllib3"])
-            print(f"Re-running script inside virtual environment using {venv_path}/bin/python ...")
+            print(f"INFO: Re-running script inside virtual environment using {venv_path}/bin/python ")
             os.execve(
                 f"{venv_path}/bin/python",
                 [f"{venv_path}/bin/python"] + sys.argv,
                 dict(os.environ, INSIDE_VENV="1")
             )
         else:
-            sys.exit("Cannot continue without required modules.")
+            sys.exit("FATAL: Cannot continue without required modules.")
 
 # === IMPORTS ===
 import requests
@@ -228,9 +228,10 @@ def main():
     verify_ssl = not args.insecure
     api_key = get_api_key(router)
 
-    print(f">> Connecting to {router} to retrieve local ASN via API...")
-    local_asn = get_local_asn(router, api_key, verify_ssl)
-    print(f">> Local ASN is {local_asn}")
+    print(f"\n")
+    print(f">> Connecting to {router}: get system ASN...")
+    local_asn = int(get_local_asn(router, api_key, verify_ssl))
+    print(f">> {router} system ASN is {local_asn}")
 
     print(f">> Connecting to {router} to gather BGP IPv4 summary...")
     summary = get_bgp_summary(router, api_key, verify_ssl)
@@ -242,18 +243,72 @@ def main():
     print(f"Found {len(peers)} BGP neighbors.\n")
 
     include_set = {args.include} if args.include else set()
-    excluded = [f"{ip} (AS{asn})" for ip, asn in peers if include_set and asn not in include_set]
-    if excluded:
-        print(f"Skipping {len(excluded)} neighbors(s) with ASN not within include list:")
-        for e in excluded:
-            print(f"  - {e}")
-    else:
-        print("Skipping 0 neighbors(s) with ASN not within include list:")
+    always_skip_asns = {
+        local_asn: "local ASN",
+        65332: "bogons feed",
+        212232: "bgp.tools"
+    }
 
-    print("\nAnalyzing {} peer(s)...\n".format(len(peers) - len(excluded)))
+###
+#    excluded = []
+#    peers_to_check = []
+#
+#    for ip, asn in peers:
+#        if include_set and asn in include_set:
+#            # Explicit include overrides all skips
+#            peers_to_check.append((ip, asn))
+#        elif asn in always_skip_asns:
+#            reason = always_skip_asns[asn]
+#            excluded.append(f"{ip} (AS{asn}) - always skipped: {reason}")
+#        elif include_set and asn not in include_set:
+#            excluded.append(f"{ip} (AS{asn})")
+#        else:
+#            peers_to_check.append((ip, asn))
+#
+#    if excluded:
+#        print(f"Skipping {len(excluded)} neighbors(s):")
+#        for e in excluded:
+#            print(f"  - {e}")
+#    else:
+#        print("Skipping 0 neighbors(s):")
+###
+
+    excluded = []
+    peers_to_check = []
+
     for ip, asn in peers:
+        reason = None
+
         if include_set and asn not in include_set:
-            continue
+            reason = "Not in include list"
+        elif asn == local_asn:
+            reason = "remote AS same as system AS"
+        elif asn == 65332:
+            reason = "bogons feed"
+        elif asn == 212232:
+            reason = "bgp.tools"
+
+#        if reason and not (include_set and asn in include_set):
+#            excluded.append((f"{ip} (AS{asn})", f"Skipped: {reason}"))
+        if reason and not (include_set and asn in include_set):
+            excluded.append((ip, f"AS{asn}", f"Skipped: {reason}"))
+        else:
+            peers_to_check.append((ip, asn))
+
+    if excluded:
+        print(f"Skipping {len(excluded)} neighbors(s):")
+#        maxlen = max(len(peer_str) for peer_str, _ in excluded)
+#        for peer_str, reason_str in excluded:
+#            print(f"  - {peer_str.ljust(maxlen)}  {reason_str}")
+        max_ip_len = max(len(ip) for ip, _, _ in excluded)
+        max_asn_len = max(len(asn_str) for _, asn_str, _ in excluded)
+        for ip, asn_str, reason_str in excluded:
+            print(f"  - {ip.ljust(max_ip_len)}  {asn_str.ljust(max_asn_len)}  {reason_str}")
+    else:
+        print("Skipping 0 neighbors(s):")
+
+    print(f"\nAnalyzing {len(peers_to_check)} neighbor(s)...\n")
+    for ip, asn in peers_to_check:
         routes = get_received_prefixes(router, api_key, ip, verify_ssl)
         prefixes = parse_received_routes(routes)
         print(f">>> Neighbor {ip} (AS{asn}) : [{len(prefixes)} prefixes]")
