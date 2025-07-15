@@ -1,107 +1,154 @@
 #!/usr/bin/env python3
 
-import json
 import argparse
+import json
+import os
+import sys
+import subprocess
+from datetime import datetime
+import re
 import socket
-
-TARGET_ASN = "19366"
 
 ANSI_RED = "\033[91m"
 ANSI_GREEN = "\033[92m"
 ANSI_RESET = "\033[0m"
 
-def resolve_as_names(asn_list):
-    """Resolve ASNs to names using whois bulkmode at bgp.tools"""
-    query = "begin\n" + "\n".join(f"as{asn}" for asn in asn_list) + "\nend\n"
-    asn_names = {}
-    try:
-        with socket.create_connection(("bgp.tools", 43), timeout=5) as sock:
-            sock.sendall(query.encode())
-            response = b""
-            while True:
-                chunk = sock.recv(4096)
-                if not chunk:
-                    break
-                response += chunk
-            lines = response.decode(errors="ignore").splitlines()
-            for line in lines:
-                parts = line.split("|")
-                if len(parts) >= 6:
-                    asn = parts[0].strip()
-                    name = parts[-1].strip()
-                    if asn.isdigit():
-                        asn_names[asn] = name
-    except Exception as e:
-        print(f"{ANSI_RED}Warning: ASN name resolution failed: {e}{ANSI_RESET}")
-    return asn_names
+def debug_print(debug, message):
+    if debug:
+        print(f"+DEBUG: {message}")
 
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("input_file", help="Path to bgp-tools.json file")
-    parser.add_argument("-p", "--include-single-source-paths", action="store_true", help="Include ASNs seen from only one LG vantage point")
-    parser.add_argument("-m", "--missing", help="Comma-separated list of expected upstream ASNs to check")
-    return parser.parse_args()
+def run_bgp_batch(prefixes, target_asn, timestamp, debug=False):
+    log_file = f".workdir/bgp-tools-batch-out-{timestamp}"
+    cmds = '\n'.join([f"show route {p} short match {target_asn}" for p in prefixes])
+    exp_script = "./bgp-batch.exp"
+    if not os.path.exists(exp_script):
+        print(f"FATAL: Expect script not found at {exp_script}")
+        sys.exit(1)
+    debug_print(debug, f"Calling {exp_script} with {len(prefixes)} commands, log_file: {log_file}")
+    env = os.environ.copy()
+    env["BGP_CMDS"] = cmds
+    env["BGP_LOG"] = log_file
+    subprocess.run(["expect", exp_script], env=env)
+    print(f"Output written to: {log_file}")
+
+def query_as_names(asns, debug=False):
+    debug_print(debug, f"Querying AS names for: {asns}")
+    try:
+        s = socket.create_connection(("bgp.tools", 43), timeout=10)
+        s.sendall(b"begin\n")
+        for asn in asns:
+            s.sendall(f"as{asn}\n".encode())
+        s.sendall(b"end\n")
+        response = b""
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            response += chunk
+        s.close()
+        result = {}
+        for line in response.decode().splitlines():
+            parts = line.split("|")
+            if len(parts) >= 6:
+                asn = parts[0].strip()
+                name = parts[-1].strip()
+                if asn.isdigit():
+                    result[int(asn)] = name.split(",")[0].split(" ")[0]
+        debug_print(debug, f"Resolved AS names: {result}")
+        return result
+    except Exception as e:
+        print(f"Error resolving AS names: {e}")
+        return {}
 
 def main():
-    args = parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-a", "--target-asn", required=True, help="The ASN of which you want to check global propagation")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("-f", "--file", help="Text file of prefixes, one per line")
+    group.add_argument("-s", "--as-set", help="IRR as-set object to enumerate prefixes")
+    parser.add_argument("-p", "--include-single-source-paths", action="store_true", help="Include paths seen by only one source ASN")
+    parser.add_argument("-m", "--missing", help="Comma-separated list of ASNs to verify propagation")
+    parser.add_argument("-j", "--json", help="JSON input file (default .workdir/bgp-tools.json)", default=".workdir/bgp-tools.json")
+    parser.add_argument("-d", "--debug", action="store_true", help="Enable debug output")
+    args = parser.parse_args()
 
-    with open(args.input_file) as f:
+    prefix_file = ".workdir/prefixes.txt"
+    if args.file:
+        prefix_file = args.file
+        debug_print(args.debug, f"Using user-specified prefix file: {prefix_file}")
+    elif args.as_set:
+        os.makedirs(".workdir", exist_ok=True)
+        debug_print(args.debug, f"Calling ./enumerate_as-set_prefixes -q {args.as_set} > {prefix_file}")
+        subprocess.run(["./enumerate_as-set_prefixes", "-q", args.as_set], stdout=open(prefix_file, "w"), check=True)
+
+    if not os.path.isfile(prefix_file) or os.path.getsize(prefix_file) == 0:
+        print("FATAL: No prefixes to query!")
+        sys.exit(1)
+
+    with open(prefix_file) as f:
+        prefixes = [line.strip() for line in f if line.strip()]
+    debug_print(args.debug, f"Loaded {len(prefixes)} prefixes from {prefix_file}")
+
+    timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    debug_print(args.debug, f"Using UTC timestamp {timestamp}")
+    run_bgp_batch(prefixes, args.target_asn, timestamp, debug=args.debug)
+
+    if not os.path.exists(args.json):
+        print(f"FATAL: Missing JSON file: {args.json}")
+        sys.exit(1)
+
+    with open(args.json) as f:
         data = json.load(f)
 
-    include_singles = args.include_single_source_paths
-    expected_asns = set(args.missing.split(",")) if args.missing else set()
-    asn_names = resolve_as_names(sorted(expected_asns)) if expected_asns else {}
+    as_name_map = {}
+    check_asns = []
+    if args.missing:
+        check_asns = sorted(set(int(asn) for asn in args.missing.split(",")))
+        as_name_map = query_as_names(check_asns, debug=args.debug)
 
     print()
-    print(f"{'Prefix':<22}{'OriginAS':<9}Global Propagation from AS{TARGET_ASN}")
+    print(f"{'Prefix':<22} {'OriginAS':<8} Global Propagation from AS{args.target_asn}")
 
-    for prefix, entries in data.items():
-        if not entries:
-            continue
-
-        origin_as = entries[0]["as_path"][-1] if "as_path" in entries[0] else "?"
-        upstream_counts = {}
-        seen_paths = []
-
+    for prefix in prefixes:
+        entries = data.get(prefix, [])
+        origin_asns = set()
+        upstreams_seen = {}
         for entry in entries:
             path = entry.get("as_path", [])
-            if TARGET_ASN in path:
-                idx = path.index(TARGET_ASN)
-                if idx >= 1:
-                    upstream = path[idx - 1]
-                    upstream_counts[upstream] = upstream_counts.get(upstream, set())
-                    upstream_counts[upstream].add(entry["source_asn"])
-                    seen_paths.append((upstream, entry["source_asn"]))
+            if args.target_asn in path:
+                try:
+                    idx = path.index(args.target_asn)
+                    origin = path[-1]
+                    origin_asns.add(origin)
+                    for asn in path[idx + 1:]:
+                        upstreams_seen.setdefault(asn, set()).add(entry["source_asn"])
+                except ValueError:
+                    continue
 
-        upstreams = []
-        for asn, sources in upstream_counts.items():
-            if len(sources) > 1:
-                upstreams.append(asn)
-            elif include_singles:
-                upstreams.append(asn + "*")
+        if not upstreams_seen and not check_asns:
+            print(f"{prefix:<22} {'':<8} (no as-paths including {args.target_asn})")
+            continue
 
-        if args.missing:
-            print(f"{prefix:<22}{origin_as:<9}")
-            for expected_asn in sorted(expected_asns, key=int):
-                full_name = asn_names.get(expected_asn, "???")
-                name = full_name.split()[0] if full_name != "???" else "???"
-                is_present = any(expected_asn == u.rstrip("*") for u in upstreams)
-                label = f"{ANSI_GREEN}[ OK ]{ANSI_RESET}" if is_present else f"{ANSI_RED}[FAIL]{ANSI_RESET}"
-                print(f"{'':<22}{'':<9}{expected_asn:<8} {name:<30}{label}")
-            print()
+        origin_str = ",".join(str(asn) for asn in origin_asns) if origin_asns else ""
+        print(f"{prefix:<22} {origin_str:<8}")
+
+        if check_asns:
+            for asn in check_asns:
+                name = as_name_map.get(asn, "???")
+                label = f"{ANSI_GREEN}[ OK ]{ANSI_RESET}" if asn in upstreams_seen else f"{ANSI_RED}[FAIL]{ANSI_RESET}"
+                print(f"{'':<31} {asn:<8} {name:<30} {label}")
         else:
-            if not upstreams:
-                print(f"{prefix:<22}{origin_as:<9}(no as-paths including {TARGET_ASN})")
-            else:
-                up_strs = []
-                for u in upstreams:
-                    mark = ""
-                    if u.endswith("*"):
-                        mark = f"{ANSI_RED}*{ANSI_RESET}"
-                        u = u.rstrip("*")
-                    up_strs.append(f"{u}{mark}")
-                print(f"{prefix:<22}{origin_as:<9}{', '.join(up_strs)}")
+            line = []
+            for asn, sources in sorted(upstreams_seen.items()):
+                tag = "" if len(sources) > 1 or args.include_single_source_paths else "*"
+                if tag == "*" and not args.include_single_source_paths:
+                    continue
+                color = ANSI_RED if tag == "*" else ""
+                line.append(f"{color}{asn}{tag}{ANSI_RESET}")
+            if line:
+                print(f"{'':<31} {', '.join(line)}")
+
+        print()
 
 if __name__ == "__main__":
     main()
-
