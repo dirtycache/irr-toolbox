@@ -1,50 +1,113 @@
 #!/usr/bin/expect -f
+# Environment:
+#   BGPCHECK_ASN - Target ASN to match in commands
+#   BGPCHECK_TS  - Shared UTC timestamp
+#   BGPCHECK_DEBUG - If set to "1", enables +DEBUG output to stdout
 
-#log_user 0
-set timeout 20
-
-# Prefix commands
-set cmds {
-    "show route 23.128.76.0/24 short match 19366"
-    "show route 23.158.168.0/24 short match 19366"
-    "show route 23.158.184.0/24 short match 19366"
-    "show route 23.164.232.0/24 short match 19366"
-    "show route 23.169.240.0/24 short match 19366"
-    "show route 23.169.241.0/24 short match 19366"
-    "show route 23.169.242.0/24 short match 19366"
-    "show route 23.169.243.0/24 short match 19366"
-    "show route 23.169.244.0/24 short match 19366"
-    "show route 23.169.245.0/24 short match 19366"
-    "show route 23.169.248.0/24 short match 19366"
-    "show route 23.169.249.0/24 short match 19366"
-    "show route 23.169.250.0/24 short match 19366"
-    "show route 23.169.251.0/24 short match 19366"
-    "show route 23.169.252.0/24 short match 19366"
-    "show route 23.169.253.0/24 short match 19366"
-    "show route 23.169.254.0/24 short match 19366"
-    "show route 23.169.255.0/24 short match 19366"
-    "show route 23.187.248.0/24 short match 19366"
-    "show route 44.76.16.0/24 short match 19366"
-    "show route 44.78.16.0/24 short match 19366"
-    "show route 64.40.23.0/24 short match 19366"
+# Check env vars
+if {![info exists env(BGPCHECK_ASN)] || ![info exists env(BGPCHECK_TS)]} {
+    puts "FATAL: Missing required environment variables (BGPCHECK_ASN, BGPCHECK_TS)"
+    exit 1
 }
 
-# Output log file
-log_file -noappend bgp-tools-output.txt
+set target_asn $env(BGPCHECK_ASN)
+set timestamp $env(BGPCHECK_TS)
+set cmd_file ".workdir/prefixes-${timestamp}.txt"
+set log_file ".workdir/bgp-tools-batch-out-${timestamp}"
 
-# Start SSH
-spawn ssh -oStrictHostKeyChecking=no lg@bgp.tools
-
-# Just sleep until the banner settles
-sleep 5
-
-# Send each command
-foreach cmd $cmds {
-    send "$cmd\r"
-    sleep 3
+# Debug mode control
+set debug_mode 0
+if {[info exists env(BGPCHECK_DEBUG)] && $env(BGPCHECK_DEBUG) eq "1"} {
+    set debug_mode 1
 }
 
-# Exit with Ctrl-D
+# Output control
+log_user $debug_mode
+
+# Debug print helper
+proc dbg {msg} {
+    global debug_mode
+    if {$debug_mode} {
+        send_user "+DEBUG: $msg\n"
+    }
+}
+
+# Strip ANSI and OSC sequences from line
+proc strip_escapes {input} {
+    regsub -all {\x1b\[[0-9;]*[A-Za-z]} $input "" cleaned
+    regsub -all {\x1b\][^\a]*\a} $cleaned "" cleaned
+    regsub -all {\x1b[^m]*} $cleaned "" cleaned
+    return $cleaned
+}
+
+dbg "Reading commands from $cmd_file"
+
+# Load prefixes
+set fh [open $cmd_file r]
+set prefix_list [split [read $fh] "\n"]
+close $fh
+
+# Start session and log all output
+log_file -noappend $log_file
+spawn env TERM=dumb ssh -o StrictHostKeyChecking=no lg@bgp.tools
+dbg "SSH session opened, waiting for banner"
+
+# Wait until banner line (after color junk)
+set banner_seen 0
+set timeout 15
+
+while {!$banner_seen} {
+    expect {
+        -re "(?i)for more information about as" {
+            set raw_line $expect_out(buffer)
+            set clean [strip_escapes $raw_line]
+            dbg "Matched banner line: $clean"
+            set banner_seen 1
+        }
+        -re "(.*)" {
+            set junk [strip_escapes $expect_out(1,string)]
+            dbg "Received: $junk"
+        }
+        timeout {
+            puts "FATAL: LG session did not reach banner text"
+            exit 1
+        }
+    }
+}
+
+# Send each route lookup
+foreach prefix $prefix_list {
+    set prefix [string trim $prefix]
+    if {$prefix eq ""} { continue }
+
+    dbg "Sending: show route $prefix short match $target_asn"
+    send "show route $prefix short match $target_asn\r"
+
+    # Wait for prompt again to mark command completion
+    set received 0
+    set response_timeout 15
+    set start_time [clock seconds]
+
+    while {!$received} {
+        expect {
+            -re "(?i)bgp\\.tools>\\r" {
+                dbg "Completed: $prefix"
+                set received 1
+            }
+            -re "(.*)" {
+                set line [strip_escapes $expect_out(1,string)]
+                dbg "Received: $line"
+            }
+            timeout {
+                if {[clock seconds] - $start_time > $response_timeout} {
+                    dbg "Timeout waiting for response to $prefix"
+                    break
+                }
+            }
+        }
+    }
+}
+
+# Exit cleanly
 send "\004"
-expect eof
-
+flush stdout
