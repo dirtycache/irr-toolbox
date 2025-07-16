@@ -1,0 +1,27 @@
+#!/usr/bin/expect -f
+set timeout 20
+set commands [lrange $argv 0 end]
+
+# Match anything ending in '>' â the prompt (very relaxed)
+set prompt_re {> $}
+
+spawn ssh -tt lg@bgp.tools
+
+# Wait for initial prompt
+expect {
+    -re $prompt_re {}
+    timeout { puts "ERROR: timeout waiting for initial prompt"; exit 1 }
+}
+
+# Send commands
+foreach cmd $commands {
+    send -- "$cmd\r"
+    expect {
+        -re $prompt_re {}
+        timeout { puts "ERROR: timeout waiting for command output"; exit 1 }
+    }
+}
+
+# Send Ctrl-D to exit
+send "\004"
+expect eof

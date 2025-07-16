@@ -1,0 +1,25 @@
+# From https://bgp.tools/kb/api
+# Required for API
+# We figure this is polite for automated table export downloads too
+# (Thanks, Ben!)
+#
+# HTTP API Notes
+#
+# You must set a HTTP User-Agent to identify yourself on these requests. 
+# Default user agents are not supported as we have no contact method to 
+# reach you if something goes wrong.
+#
+# Systems who use a default or generic user agents to fetch bgp.tools 
+# data constantly may be blocked.
+#
+#The preferred user agent format is:
+#
+#    acmeco bgp.tools - contact@acme.co
+#
+# Users who scrape the HTML pages from bgp.tools may be banned with no notice. 
+# bgp.tools's HTML output is a site for humans and their respective usage 
+# patterns, not robots. If you need data there may be solution if you email 
+# admin@bgp.tools
+#
+# PLACE THIS FILE IN YOUR HOME DIRECTORY (not the irr-toolbox root!)
+#acmeco bgp.tools - contact@acme.com

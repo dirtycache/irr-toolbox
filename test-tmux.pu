@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+import subprocess
+
+SESSION = "bgptools"
+
+cmd = (
+    f'tmux new-session -d -s {SESSION} '
+    '\'bash -c "ssh -tt lg@bgp.tools; read -p \\"Press Enter to exit tmux...\\""\''
+)
+
+print("Launching tmux session...")
+subprocess.run(cmd, shell=True)
+print("You can now attach in another terminal with:")
+print(f"  tmux attach -t {SESSION}")
+
