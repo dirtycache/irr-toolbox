@@ -28,16 +28,29 @@ args = parser.parse_args()
 # === Configuration ===
 DATESTAMP = time.strftime("%Y%m%d-%H%M%S")
 ASN = str(args.target_asn)
-OUTPUT_DIR = "./.workdir"
+OUTPUT_DIR = os.path.expanduser("~/.workdir-irr-toolbox")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 PREFIX_FILE = args.prefix_file or f"{OUTPUT_DIR}/prefixes.txt"
 OUTPUT_JSON = f"{OUTPUT_DIR}/bgp-tools.json"
 IGNORE_FILE = os.path.expanduser("~/.checkbgp_prefixignore")
 CACHE_TTL = 3600
+USER_AGENT_FILE = os.path.expanduser("~/.bgp-tools-useragent")
 
 def debug(msg):
     if args.debug:
         print(f"+DEBUG: {msg}")
+
+def get_user_agent():
+    try:
+        with open(USER_AGENT_FILE, "r") as f:
+            agent = f.read().strip()
+            if agent:
+                return agent
+    except Exception as e:
+        if args.debug:
+            print(f"+DEBUG: Failed to load User-Agent from {USER_AGENT_FILE}: {e}")
+    # Fallback
+    return "Python bgp.tools fetcher (no UA file found)"
 
 import urllib.request
 import csv
@@ -63,7 +76,16 @@ def load_asn_names():
     if needs_download:
         try:
             print(f"+DEBUG: Downloading fresh ASN CSV to {ASN_CSV_PATH}")
-            urllib.request.urlretrieve("https://bgp.tools/asns.csv", ASN_CSV_PATH)
+            #urllib.request.urlretrieve("https://bgp.tools/asns.csv", ASN_CSV_PATH)
+            user_agent = get_user_agent()
+            debug(f"Using User-Agent: {user_agent}")
+            req = urllib.request.Request(
+                "https://bgp.tools/asns.csv",
+                headers={"User-Agent": user_agent}
+            )
+            with urllib.request.urlopen(req) as response, open(ASN_CSV_PATH, 'wb') as out_file:
+                out_file.write(response.read())
+
         except Exception as e:
             print(f"+DEBUG: Failed to download ASN names: {e}")
             return
