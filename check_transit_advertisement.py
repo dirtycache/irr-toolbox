@@ -6,6 +6,10 @@ import json
 import time
 import argparse
 from time import sleep
+import urllib.request
+import csv
+from ipaddress import ip_network
+
 
 # === Colors ===
 ANSI_RED = "\033[91m"
@@ -36,6 +40,28 @@ IGNORE_FILE = os.path.expanduser("~/.checkbgp_prefixignore")
 CACHE_TTL = 3600
 USER_AGENT_FILE = os.path.expanduser("~/.bgp-tools-useragent")
 
+def garbage_collect_tmux(debug=False):
+    """Kill stale tmux sessions created by this script only (prefixed with 'bgp_')"""
+    try:
+        result = subprocess.run(["tmux", "ls"], capture_output=True, text=True, check=False)
+        if result.returncode != 0:
+            if debug:
+                print("+DEBUG: No tmux server running or no sessions to list")
+            return
+
+        sessions = result.stdout.strip().splitlines()
+        for line in sessions:
+            match = re.match(r'^(bgp_[^\s:]+)', line)
+            if match:
+                session = match.group(1)
+                # Optional: Check age by pid file or timestamp if needed
+                if debug:
+                    print(f"+DEBUG: Killing stale tmux session: {session}")
+                subprocess.run(["tmux", "kill-session", "-t", session], check=False)
+    except Exception as e:
+        if debug:
+            print(f"+DEBUG: Error during tmux garbage collection: {e}")
+
 def debug(msg):
     if args.debug:
         print(f"+DEBUG: {msg}")
@@ -51,9 +77,6 @@ def get_user_agent():
             print(f"+DEBUG: Failed to load User-Agent from {USER_AGENT_FILE}: {e}")
     # Fallback
     return "Python bgp.tools fetcher (no UA file found)"
-
-import urllib.request
-import csv
 
 ASN_CSV_PATH = os.path.join(OUTPUT_DIR, "asns.csv")
 ASN_CSV_TTL = 86400  # 24 hours
@@ -330,8 +353,6 @@ else:
 
 print(header)
 print("-" * len(header))
-
-from ipaddress import ip_network
 
 for prefix, entries in sorted(combined_data.items(), key=lambda x: ip_network(x[0])):
     if EXPECTED_UPSTREAMS:
